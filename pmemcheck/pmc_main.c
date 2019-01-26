@@ -1048,6 +1048,16 @@ do_fence(void)
     }
 }
 
+static void
+performFlush(UWord base, UWord size) {
+    VG_(emit)("AFTER FLUSH: 0x%lx; 0x%lx", base, size);
+}
+
+static void
+beforeFlush() {
+    VG_(emit)("Called before flush!");
+}
+
 /**
 * \brief Register a flush.
 *
@@ -1062,7 +1072,11 @@ static void
 do_flush(UWord base, UWord size)
 {
     struct pmem_st flush_info = {0};
-
+    
+    // Software Cache performs flush here!
+    performFlush(base & ~(pmem.flush_align_size - 1), roundup(size, pmem.flush_align_size));
+    
+    // Note: ALWAYS align the flush address...
     if (LIKELY(pmem.force_flush_align == False)) {
         flush_info.addr = base;
         flush_info.size = size;
@@ -1074,6 +1088,9 @@ do_flush(UWord base, UWord size)
 
     if (pmem.log_stores)
         VG_(emit)("|FLUSH;0x%lx;0x%llx", flush_info.addr, flush_info.size);
+
+    // Note: Past this is irrelevant to PMAT: Flush the cache line marked in
+    // the software cache implementation!
 
     /* unfortunately lookup doesn't work here, the oset is an avl tree */
 
@@ -1463,6 +1480,7 @@ pmc_instrument(VgCallbackClosure *closure,
                 break;
 
             case Ist_Flush: {
+                add_simple_event(sbOut, beforeFence, "beforeFence");
                 addStmtToIRSB(sbOut, st);
                 if (LIKELY(pmem.automatic_isa_rec)) {
                     IRExpr *addr = st->Ist.Flush.addr;
