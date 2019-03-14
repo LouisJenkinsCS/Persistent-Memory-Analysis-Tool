@@ -1074,7 +1074,7 @@ do_flush(UWord base, UWord size)
     struct pmem_st flush_info = {0};
     
     // Software Cache performs flush here!
-    performFlush(base & ~(pmem.flush_align_size - 1), roundup(size, pmem.flush_align_size));
+    //performFlush(base & ~(pmem.flush_align_size - 1), roundup(size, pmem.flush_align_size));
     
     // Note: ALWAYS align the flush address...
     if (LIKELY(pmem.force_flush_align == False)) {
@@ -1480,7 +1480,7 @@ pmc_instrument(VgCallbackClosure *closure,
                 break;
 
             case Ist_Flush: {
-                add_simple_event(sbOut, beforeFence, "beforeFence");
+                //add_simple_event(sbOut, beforeFlush, "beforeFlush");
                 addStmtToIRSB(sbOut, st);
                 if (LIKELY(pmem.automatic_isa_rec)) {
                     IRExpr *addr = st->Ist.Flush.addr;

@@ -11,7 +11,8 @@ TOOLS =		memcheck \
 		none \
 		helgrind \
 		drd \
-		pmemcheck
+		pmemcheck \
+		pmat
 
 EXP_TOOLS = 	exp-sgcheck \
 		exp-bbv \
