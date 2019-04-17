@@ -41,6 +41,15 @@ cmp_pmem_st(const void *key, const void *elem)
         return 0;
 }
 
+Word
+cmp_pmat_cache_entry(const void *key, const void *elem)
+{
+    const struct pmem_st *lhs = (const struct pmat_cache_entry *) (key);
+    const struct pmem_st *rhs = (const struct pmat_cache_entry *) (elem);
+
+    return lhs->addr - rhs->addr;
+}
+
 /**
  * \brief Check if regions overlap.
  * \param lhs Region to check.

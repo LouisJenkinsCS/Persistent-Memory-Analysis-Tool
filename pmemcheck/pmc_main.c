@@ -67,6 +67,9 @@ static struct pmem_ops {
     /** Set of registered persistent memory regions. */
     OSet *pmem_mappings;
 
+    /* Entries in cache; TODO: Use a Pool */
+    OSet *pmat_cache_entries;
+
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
 
@@ -688,18 +691,29 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
 {
     if (LIKELY(!is_pmem_access(addr, size)))
         return;
+        
+    Int startOffset = OFFSET_CACHELINE(addr);
+    Int endOffset = OFFSET_CACHELINE(addr + size);
+    assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
+    
+    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
+            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+    // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
+    
+    // If the cache line has not been written back, write it into that cache-line.
+    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
+    if (exists) {
+        memcpy(exists->ptr + startOffset, &value, size);
+        // TODO: This may end up going to a pool to significantly speed things up
+        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+        return;
+    }
 
-    struct pmem_st *store = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
-            (SizeT) sizeof (struct pmem_st));
-    store->addr = addr;
-    store->size = size;
-    store->state = STST_DIRTY;
-    store->block_num = sblocks;
-    store->value = value;
-    store->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
+    memset(entry->ptr, 0, CACHELINE_SIZE);
+    memcpy(entry->ptr + OFFSET_CACHELINE(addr), &value, size);
 
     /* log the store, regardless if it is a double store */
-    if (pmem.log_stores) {
+  /*  if (pmem.log_stores) {
         VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, value, size);
         if (pmem.store_traces)
             pp_store_trace(store, pmem.store_traces_depth);
@@ -708,9 +722,10 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         handle_with_mult_stores(store);
     else
         add_and_merge_store(store);
-
+*/
     /* do transaction check */
-    handle_tx_store(store);
+/*    handle_tx_store(store);
+*/
 }
 
 /**
@@ -1872,6 +1887,7 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
+    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entry, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,
             VG_(malloc), "pmc.main.cpci.1", VG_(free));
 

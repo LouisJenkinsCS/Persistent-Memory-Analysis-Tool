@@ -30,6 +30,16 @@ struct pmem_st {
     } state;
 };
 
+struct pmat_cache_entry {
+   Addr addr;
+   char data[0];
+}
+
+// Converts addr to cache line addr
+#define CACHELINE_SIZE 64
+#define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
+#define OFFSET_CACHELINE(addr) (addr % CACHELINE_SIZE)
+
 /*------------------------------------------------------------*/
 /*--- Common functions                                     ---*/
 /*------------------------------------------------------------*/
@@ -45,6 +55,8 @@ void remove_region(const struct pmem_st *region, OSet *region_set);
 
 /* A compare function for regions stored in the OSetGen. */
 Word cmp_pmem_st(const void *key, const void *elem);
+
+Word cmp_pmat_cache_entries(const void *key, const void *elem);
 
 /* Check and update the given warning event register. */
 void add_warning_event(struct pmem_st **event_register, UWord *nevents,
