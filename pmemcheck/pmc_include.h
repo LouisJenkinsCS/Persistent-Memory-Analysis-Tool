@@ -33,12 +33,13 @@ struct pmem_st {
 struct pmat_cache_entry {
    Addr addr;
    char data[0];
-}
+};
 
 // Converts addr to cache line addr
 #define CACHELINE_SIZE 64
 #define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
 #define OFFSET_CACHELINE(addr) (addr % CACHELINE_SIZE)
+#define NUM_CACHE_ENTRIES 1024
 
 /*------------------------------------------------------------*/
 /*--- Common functions                                     ---*/

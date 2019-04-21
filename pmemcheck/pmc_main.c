@@ -26,6 +26,7 @@
 #include "pub_tool_gdbserver.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_threadstate.h"
+#include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcprint.h"
 #include "pub_tool_machine.h"
@@ -271,8 +272,8 @@ print_multiple_stores(void)
 static void
 print_store_stats(void)
 {
-    VG_(umsg)("Number of stores not made persistent: %u\n", VG_(OSetGen_Size)
-            (pmem.pmem_stores));
+    VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
+            (pmem.pmat_cache_entries));
 
     if (VG_(OSetGen_Size)(pmem.pmem_stores) != 0) {
         VG_(OSetGen_ResetIter)(pmem.pmem_stores);
@@ -694,23 +695,50 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         
     Int startOffset = OFFSET_CACHELINE(addr);
     Int endOffset = OFFSET_CACHELINE(addr + size);
-    assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
+    tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
     
     struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
             (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+    entry->addr = addr;
     // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
     // If the cache line has not been written back, write it into that cache-line.
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
     if (exists) {
-        memcpy(exists->ptr + startOffset, &value, size);
+        VG_(memcpy)(exists->data + startOffset, &value, size);
         // TODO: This may end up going to a pool to significantly speed things up
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
         return;
+    } else {
+        // Create a new entry...
+        VG_(memset)(entry->data, 0, CACHELINE_SIZE);
+        VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
+        VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
+
+        // Check if we need to evict...
+        if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > NUM_CACHE_ENTRIES) {
+            XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
+            VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+            while ( (entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries)) ) {
+                if (VG_(random)(NULL) % 2) {
+                   VG_(addToXA)(arr, &entry); 
+                }
+            }
+            // TODO: Remove selected entries!
+            Word nEntries = VG_(sizeXA)(arr);
+            for (int i = 0; i < nEntries; i++) {
+                entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
+                for (Addr addr = entry->addr; addr < ((UWord) entry->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
+                    VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
+                }
+                VG_(emit)("|FLUSH;0x%lx,0x%llx", entry->addr, CACHELINE_SIZE);
+                VG_(emit)("|FENCE");
+                VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
+                VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+            }
+        }
     }
 
-    memset(entry->ptr, 0, CACHELINE_SIZE);
-    memcpy(entry->ptr + OFFSET_CACHELINE(addr), &value, size);
 
     /* log the store, regardless if it is a double store */
   /*  if (pmem.log_stores) {
@@ -1887,7 +1915,7 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
-    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entry, VG_(malloc), "pmc.main.cpci.0", VG_(free));
+    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,
             VG_(malloc), "pmc.main.cpci.1", VG_(free));
 

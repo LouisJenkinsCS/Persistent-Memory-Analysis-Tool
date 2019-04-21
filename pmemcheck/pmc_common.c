@@ -42,10 +42,10 @@ cmp_pmem_st(const void *key, const void *elem)
 }
 
 Word
-cmp_pmat_cache_entry(const void *key, const void *elem)
+cmp_pmat_cache_entries(const void *key, const void *elem)
 {
-    const struct pmem_st *lhs = (const struct pmat_cache_entry *) (key);
-    const struct pmem_st *rhs = (const struct pmat_cache_entry *) (elem);
+    const struct pmat_cache_entry *lhs = (const struct pmat_cache_entry *) (key);
+    const struct pmat_cache_entry *rhs = (const struct pmat_cache_entry *) (elem);
 
     return lhs->addr - rhs->addr;
 }
