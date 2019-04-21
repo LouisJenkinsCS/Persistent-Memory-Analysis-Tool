@@ -64,12 +64,20 @@
 static struct pmem_ops {
     /** Set of stores to persistent memory. */
     OSet *pmem_stores;
+    
+    /** Pipe between parent and child */
+    Word pmat_pipe_fd[2];
+    
+    /** Mappings of files addresses to their descriptors */
+    OSet *pmat_registered_files;
 
     /** Set of registered persistent memory regions. */
     OSet *pmem_mappings;
 
     /* Entries in cache; TODO: Use a Pool */
     OSet *pmat_cache_entries;
+    
+    Word pmat_fd_descr;
 
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
@@ -697,9 +705,9 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
     Int endOffset = OFFSET_CACHELINE(addr + size);
     tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
     
-    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
+    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
             (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
-    entry->addr = addr;
+    entry->addr = TRIM_CACHELINE(addr);
     // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
     // If the cache line has not been written back, write it into that cache-line.
@@ -726,6 +734,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
             }
             // TODO: Remove selected entries!
             Word nEntries = VG_(sizeXA)(arr);
+            struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, sizeof(struct pmat_registered_file));
             for (int i = 0; i < nEntries; i++) {
                 entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
                 for (Addr addr = entry->addr; addr < ((UWord) entry->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
@@ -733,6 +742,14 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
                 }
                 VG_(emit)("|FLUSH;0x%lx,0x%llx", entry->addr, CACHELINE_SIZE);
                 VG_(emit)("|FENCE");
+                
+                int sz = 1;
+                VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+                file->addr = entry->addr; 
+                struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, file);
+                tl_assert(realFile && "Unable to find descriptor associated with an address!");
+                VG_(write)(pmem.pmat_pipe_fd[1], &realFile->descr, sizeof(realFile->descr));
+                VG_(write)(pmem.pmat_pipe_fd[1], entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
                 VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
                 VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
             }
@@ -1113,111 +1130,25 @@ beforeFlush() {
 */
 static void
 do_flush(UWord base, UWord size)
-{
-    struct pmem_st flush_info = {0};
+    {
+    // TODO: Need to handle multi-cacheline flushes!
+    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
+            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+    entry->addr = TRIM_CACHELINE(base);
+    // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
-    // Software Cache performs flush here!
-    //performFlush(base & ~(pmem.flush_align_size - 1), roundup(size, pmem.flush_align_size));
-    
-    // Note: ALWAYS align the flush address...
-    if (LIKELY(pmem.force_flush_align == False)) {
-        flush_info.addr = base;
-        flush_info.size = size;
-    } else {
-        /* align flushed memory */
-        flush_info.addr = base & ~(pmem.flush_align_size - 1);
-        flush_info.size = roundup(size, pmem.flush_align_size);
+    // If the cache line has not been written back, write it into that cache-line.
+    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
+    if (exists) {
+        for (Addr addr = exists->addr; addr < ((UWord) exists->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
+            VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
+        }
+        VG_(emit)("|FLUSH;0x%lx,0x%llx", exists->addr, CACHELINE_SIZE);
+        VG_(emit)("|FENCE");
+        VG_(OSetGen_Remove)(pmem.pmat_cache_entries, exists);
+        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exists);
     }
-
-    if (pmem.log_stores)
-        VG_(emit)("|FLUSH;0x%lx;0x%llx", flush_info.addr, flush_info.size);
-
-    // Note: Past this is irrelevant to PMAT: Flush the cache line marked in
-    // the software cache implementation!
-
-    /* unfortunately lookup doesn't work here, the oset is an avl tree */
-
-    Bool valid_flush = False;
-    /* reset the iterator */
-    VG_(OSetGen_ResetIter)(pmem.pmem_stores);
-    Addr flush_max = flush_info.addr + flush_info.size;
-    struct pmem_st *being_flushed;
-    while ((being_flushed = VG_(OSetGen_Next)(pmem.pmem_stores)) != NULL){
-
-       /* not an interesting entry, flush doesn't matter */
-       if (cmp_pmem_st(&flush_info, being_flushed) != 0) {
-           continue;
-       }
-
-       valid_flush = True;
-       /* check for multiple flushes of stores */
-       if (being_flushed->state != STST_DIRTY) {
-           if (pmem.check_flush) {
-               /* multiple flush of the same store - probably an issue */
-               struct pmem_st *wrong_flush = VG_(malloc)("pmc.main.cpci.3",
-                       sizeof(struct pmem_st));
-               *wrong_flush = *being_flushed;
-               add_warning_event(pmem.redundant_flushes,
-                                 &pmem.redundant_flushes_reg,
-                                 wrong_flush, MAX_FLUSH_ERROR_EVENTS,
-                                 print_redundant_flush_error);
-           }
-           continue;
-       }
-
-       being_flushed->state = STST_FLUSHED;
-
-       /* store starts before base flush address */
-       if (being_flushed->addr < flush_info.addr) {
-            /* split and reinsert */
-            struct pmem_st *split = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
-                    (SizeT)sizeof (struct pmem_st));
-            *split = *being_flushed;
-            split->size = flush_info.addr - being_flushed->addr;
-            split->state = STST_DIRTY;
-
-            /* adjust original */
-            VG_(OSetGen_Remove)(pmem.pmem_stores, being_flushed);
-            being_flushed->addr = flush_info.addr;
-            being_flushed->size -= split->size;
-            VG_(OSetGen_Insert)(pmem.pmem_stores, split);
-            VG_(OSetGen_Insert)(pmem.pmem_stores, being_flushed);
-            /* reset iter */
-            VG_(OSetGen_ResetIterAt)(pmem.pmem_stores, being_flushed);
-       }
-
-       /* end of store is behind max flush */
-       if (being_flushed->addr + being_flushed->size > flush_max) {
-            /* split and reinsert */
-            struct pmem_st *split = VG_(OSetGen_AllocNode)(pmem.pmem_stores,
-                    (SizeT)sizeof (struct pmem_st));
-            *split = *being_flushed;
-            split->addr = flush_max;
-            split->size = being_flushed->addr + being_flushed->size - flush_max;
-            split->state = STST_DIRTY;
-
-            /* adjust original */
-            VG_(OSetGen_Remove)(pmem.pmem_stores, being_flushed);
-            being_flushed->size -= split->size;
-            VG_(OSetGen_Insert)(pmem.pmem_stores, split);
-            VG_(OSetGen_Insert)(pmem.pmem_stores, being_flushed);
-            /* reset iter */
-            VG_(OSetGen_ResetIterAt)(pmem.pmem_stores, split);
-       }
-    }
-
-    if (!valid_flush && pmem.check_flush) {
-        /* unnecessary flush event - probably an issue */
-        struct pmem_st *wrong_flush = VG_(malloc)("pmc.main.cpci.6",
-                       sizeof(struct pmem_st));
-        *wrong_flush = flush_info;
-        wrong_flush->context = VG_(record_ExeContext)(VG_(get_running_tid)(),
-                                                            0);
-        add_warning_event(pmem.superfluous_flushes,
-                          &pmem.superfluous_flushes_reg,
-                          wrong_flush, MAX_FLUSH_ERROR_EVENTS,
-                          print_superfluous_flush_error);
-    }
+    VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
 }
 
 /**
@@ -1326,8 +1257,20 @@ register_new_file(Int fd, UWord base, UWord size, UWord offset)
     }
 
     file_name[read_length] = 0;
+    int pmemfd = pmem.pmat_fd_descr++;
+    struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, (SizeT) sizeof(struct pmat_registered_file));
+    file->addr = base;
+    file->size = size;
+    file->descr = pmemfd;
+    
+    // Send to child...
+    int sz = -2;
+    VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+    VG_(write)(pmem.pmat_pipe_fd[1], file, sizeof(struct pmat_registered_file)); 
+    VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
 
     /* logging_on shall have no effect on this */
+
     if (pmem.log_stores)
         VG_(emit)("|REGISTER_FILE;%s;0x%lx;0x%lx;0x%lx", file_name, base,
                 size, offset);
@@ -1915,6 +1858,52 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
+    VG_(pipe)(pmem.pmat_pipe_fd);
+    pid_t pid = VG_(fork)();
+    if (pid == 0) {
+        VG_(printf)("Child running and terminating...\n");
+        while true {
+            // Child compares based on 'descr' so it can find the Addr associated with the descriptor
+            pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files2, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
+            int sz = 0;
+            int retval = VG_(read)(pmem.pmat_pipe_fd[0], &sz, sizeof(sz));
+            if (retval == -1) {
+                VG_(printf)("Got a return value of -1, exiting...");
+                VG_(exit)(1);
+            }
+            if (retval == sizeof(sz)) {
+                if (sz == -1) {
+                    VG_(printf)("Got size of -1, exiting...");
+                    VG_(exit)(1);
+                } else if (sz == -2) {
+                    // Register file...
+                    VG_(printf)("Got size of -2, parsing registered file...");
+                    struct pmat_registered_file file;
+                    retval = VG_(read)(pmem.pmat_pipe_fd[0], &file, sizeof(struct pmat_registered_file));
+                    tl_assert(retval == sizeof(struct pmat_registered_file) && "Read pmat_registered_file but too small...");
+                    Addr addr = VG_(malloc)("pmat-child-file-alloc", file.size);
+                    struct pmat_registered_file *newFile = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, sizeof(struct pmat_registered_file));
+                    newFile->descr = file.descr;
+                    newFile->addr = addr;
+                    newFile->size = size;
+                    VG_(printf)("Registered: (%d, %lx, %lx)", newFile->descr, newFile->addr, newFile->size);
+                    VG_(OSetGen_Insert)(pmem.pmat_registered_files, newFile);
+                } else if (sz == 1) {
+                    // Flush event
+                    VG_(printf)("Got size of 1, parsing flushed cache line...");
+                    
+
+                }
+            }
+        }
+        VG_(exit(1));
+    } else {
+        VG_(printf)("Parent continuing...\n");
+    };
+    
+    pmem.pmat_fd_descr = 0;
+    // Parent compares based on 'Addr' so that it can find the descr associated with the address.
+    pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
     pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,
             VG_(malloc), "pmc.main.cpci.1", VG_(free));

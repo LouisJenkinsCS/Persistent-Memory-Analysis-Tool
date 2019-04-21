@@ -35,6 +35,12 @@ struct pmat_cache_entry {
    char data[0];
 };
 
+struct pmat_registered_file {
+    UWord descr;
+    Addr addr;
+    UWord size;
+};
+
 // Converts addr to cache line addr
 #define CACHELINE_SIZE 64
 #define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
@@ -58,6 +64,11 @@ void remove_region(const struct pmem_st *region, OSet *region_set);
 Word cmp_pmem_st(const void *key, const void *elem);
 
 Word cmp_pmat_cache_entries(const void *key, const void *elem);
+
+Word cmp_pmat_registered_files1(const void *key, const void *elem);
+
+Word cmp_pmat_registered_files2(const void *key, const void *elem);
+
 
 /* Check and update the given warning event register. */
 void add_warning_event(struct pmem_st **event_register, UWord *nevents,

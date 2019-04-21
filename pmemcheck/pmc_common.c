@@ -41,13 +41,23 @@ cmp_pmem_st(const void *key, const void *elem)
         return 0;
 }
 
-Word
-cmp_pmat_cache_entries(const void *key, const void *elem)
+Word 
+cmp_pmat_registered_files1(const void *key, const void *elem);
 {
-    const struct pmat_cache_entry *lhs = (const struct pmat_cache_entry *) (key);
-    const struct pmat_cache_entry *rhs = (const struct pmat_cache_entry *) (elem);
+    const struct pmat_registered_file *lhs = (const struct pmat_registered_file *) (key);    
+    const struct pmat_registered_file *rhs = (const struct pmat_registered_file *) (elem);
 
     return lhs->addr - rhs->addr;
+}
+
+
+Word 
+cmp_pmat_registered_files2(const void *key, const void *elem) 
+{
+    const struct pmat_registered_file *lhs = (const struct pmat_registered_file *) (key);    
+    const struct pmat_registered_file *rhs = (const struct pmat_registered_file *) (elem);
+
+    return lhs->descr - rhs->descr;
 }
 
 /**
