@@ -66,7 +66,7 @@ static struct pmem_ops {
     OSet *pmem_stores;
     
     /** Pipe between parent and child */
-    Word pmat_pipe_fd[2];
+    Int pmat_pipe_fd[2];
     
     /** Mappings of files addresses to their descriptors */
     OSet *pmat_registered_files;
@@ -734,19 +734,19 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
             }
             // TODO: Remove selected entries!
             Word nEntries = VG_(sizeXA)(arr);
-            struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, sizeof(struct pmat_registered_file));
+            struct pmat_registered_file file;
             for (int i = 0; i < nEntries; i++) {
                 entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
-                for (Addr addr = entry->addr; addr < ((UWord) entry->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
+                /*for (Addr addr = entry->addr; addr < ((UWord) entry->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
                     VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
                 }
                 VG_(emit)("|FLUSH;0x%lx,0x%llx", entry->addr, CACHELINE_SIZE);
                 VG_(emit)("|FENCE");
-                
+                */
                 int sz = 1;
                 VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-                file->addr = entry->addr; 
-                struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, file);
+                file.addr = entry->addr; 
+                struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
                 tl_assert(realFile && "Unable to find descriptor associated with an address!");
                 VG_(write)(pmem.pmat_pipe_fd[1], &realFile->descr, sizeof(realFile->descr));
                 VG_(write)(pmem.pmat_pipe_fd[1], entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
@@ -1140,11 +1140,28 @@ do_flush(UWord base, UWord size)
     // If the cache line has not been written back, write it into that cache-line.
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
     if (exists) {
-        for (Addr addr = exists->addr; addr < ((UWord) exists->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
+        /*for (Addr addr = exists->addr; addr < ((UWord) exists->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
             VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
         }
         VG_(emit)("|FLUSH;0x%lx,0x%llx", exists->addr, CACHELINE_SIZE);
         VG_(emit)("|FENCE");
+        */
+        int sz = 1;
+        VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+        struct pmat_registered_file file;
+        file.addr = exists->addr; 
+        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        if (!realFile) {
+            VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
+            VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+            struct pmat_registered_file *tmp;
+            while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+                VG_(emit)("File Found: (%lx, 0x%lx, 0x%lx)\n", tmp->descr, tmp->addr, tmp->size);
+            }
+        }
+        tl_assert(realFile && "Unable to find descriptor associated with an address!");
+        VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
+        VG_(write)(pmem.pmat_pipe_fd[1], exists, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
         VG_(OSetGen_Remove)(pmem.pmat_cache_entries, exists);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exists);
     }
@@ -1860,51 +1877,61 @@ pmc_post_clo_init(void)
 {
     VG_(pipe)(pmem.pmat_pipe_fd);
     pid_t pid = VG_(fork)();
+    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     if (pid == 0) {
-        VG_(printf)("Child running and terminating...\n");
-        while true {
+        VG_(emit)("Child running and terminating...\n");
+        pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files2, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
+        while (1) {
             // Child compares based on 'descr' so it can find the Addr associated with the descriptor
-            pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files2, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
             int sz = 0;
             int retval = VG_(read)(pmem.pmat_pipe_fd[0], &sz, sizeof(sz));
             if (retval == -1) {
-                VG_(printf)("Got a return value of -1, exiting...");
+                VG_(emit)("Got a return value of -1, exiting...\n");
                 VG_(exit)(1);
             }
             if (retval == sizeof(sz)) {
                 if (sz == -1) {
-                    VG_(printf)("Got size of -1, exiting...");
+                    VG_(emit)("Got size of -1, exiting...\n");
                     VG_(exit)(1);
                 } else if (sz == -2) {
                     // Register file...
-                    VG_(printf)("Got size of -2, parsing registered file...");
+                    VG_(emit)("Got size of -2, parsing registered file...\n");
                     struct pmat_registered_file file;
                     retval = VG_(read)(pmem.pmat_pipe_fd[0], &file, sizeof(struct pmat_registered_file));
                     tl_assert(retval == sizeof(struct pmat_registered_file) && "Read pmat_registered_file but too small...");
                     Addr addr = VG_(malloc)("pmat-child-file-alloc", file.size);
                     struct pmat_registered_file *newFile = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, sizeof(struct pmat_registered_file));
                     newFile->descr = file.descr;
-                    newFile->addr = addr;
-                    newFile->size = size;
-                    VG_(printf)("Registered: (%d, %lx, %lx)", newFile->descr, newFile->addr, newFile->size);
+                    newFile->addr = file.addr;
+                    newFile->addr2 = addr;
+                    newFile->size = file.size;
+                    VG_(emit)("Registered: (0x%lx, 0x%lx, 0x%lx, 0x%lx)\n", newFile->descr, newFile->addr, newFile->addr2, newFile->size);
                     VG_(OSetGen_Insert)(pmem.pmat_registered_files, newFile);
                 } else if (sz == 1) {
                     // Flush event
-                    VG_(printf)("Got size of 1, parsing flushed cache line...");
-                    
-
+                    VG_(emit)("Got size of 1, parsing flushed cache line...\n");
+                    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+                    int retval = VG_(read)(pmem.pmat_pipe_fd[0], entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+                    tl_assert(retval == sizeof(struct pmat_cache_entry) + CACHELINE_SIZE && "Read pmat_cache_entry but too small...");
+                    struct pmat_registered_file file;
+                    file.addr = entry->addr;
+                    struct pmat_registered_file *newFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+                    tl_assert(newFile && "File associated with a descriptor was not found!");
+                    // Calculate address as base offset of child address plus relative offset of parent addr from the parent base.
+                    Addr addr = newFile->addr2 + (entry->addr - newFile->addr);
+                    VG_(memcpy)((char *) addr, entry->data, CACHELINE_SIZE);
+                    VG_(emit)("Flush: (0x%lx, 0x%lx)\n", addr, CACHELINE_SIZE);
                 }
             }
         }
         VG_(exit(1));
     } else {
-        VG_(printf)("Parent continuing...\n");
+        VG_(emit)("Parent continuing...\n");
     };
     
     pmem.pmat_fd_descr = 0;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
-    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,
             VG_(malloc), "pmc.main.cpci.1", VG_(free));
 
@@ -1935,7 +1962,7 @@ pmc_post_clo_init(void)
 static void
 pmc_print_usage(void)
 {
-    VG_(printf)(
+    VG_(emit)(
             "    --indiff=<uint>                        multiple store indifference\n"
             "                                           default [0 SBlocks]\n"
             "    --mult-stores=<yes|no>                 track multiple stores to the same\n"
@@ -1970,7 +1997,7 @@ pmc_print_usage(void)
 static void
 pmc_print_debug_usage(void)
 {
-    VG_(printf)(
+    VG_(emit)(
             "    (none)\n"
     );
 }

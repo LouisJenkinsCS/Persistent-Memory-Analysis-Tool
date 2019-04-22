@@ -37,7 +37,8 @@ struct pmat_cache_entry {
 
 struct pmat_registered_file {
     UWord descr;
-    Addr addr;
+    Addr addr; // Parent address
+    Addr addr2; // Child address (unused in parent)
     UWord size;
 };
 
