@@ -37,9 +37,13 @@ struct pmat_cache_entry {
 
 struct pmat_registered_file {
     UWord descr;
-    Addr addr; // Parent address
-    Addr addr2; // Child address (unused in parent)
+    Addr addr; 
     UWord size;
+};
+
+struct pmat_write_buffer_entry {
+    struct pmat_cache_entry *entry;
+    Word tid; 
 };
 
 // Converts addr to cache line addr
@@ -47,6 +51,7 @@ struct pmat_registered_file {
 #define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
 #define OFFSET_CACHELINE(addr) (addr % CACHELINE_SIZE)
 #define NUM_CACHE_ENTRIES 1024
+#define NUM_WB_ENTRIES 64
 
 /*------------------------------------------------------------*/
 /*--- Common functions                                     ---*/
@@ -70,6 +75,7 @@ Word cmp_pmat_registered_files1(const void *key, const void *elem);
 
 Word cmp_pmat_registered_files2(const void *key, const void *elem);
 
+Word cmp_pmat_write_buffer_entries(const void *key, const void *elem);
 
 /* Check and update the given warning event register. */
 void add_warning_event(struct pmem_st **event_register, UWord *nevents,

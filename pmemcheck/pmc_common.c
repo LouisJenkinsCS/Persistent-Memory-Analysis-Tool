@@ -41,6 +41,13 @@ cmp_pmem_st(const void *key, const void *elem)
         return 0;
 }
 
+Word cmp_pmat_write_buffer_entries(const void *key, const void *elem) {
+    const struct pmat_write_buffer_entry *lhs = (const struct pmat_write_buffer_entry *) (key);
+    const struct pmat_write_buffer_entry *rhs = (const struct pmat_write_buffer_entry *) (elem);
+
+    return cmp_pmat_cache_entries(lhs->entry, rhs->entry);
+}
+
 Word 
 cmp_pmat_registered_files1(const void *key, const void *elem)
 {
