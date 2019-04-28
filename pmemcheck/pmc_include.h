@@ -43,7 +43,7 @@ struct pmat_registered_file {
 
 struct pmat_write_buffer_entry {
     struct pmat_cache_entry *entry;
-    Word tid; 
+    ThreadId tid; 
 };
 
 // Converts addr to cache line addr

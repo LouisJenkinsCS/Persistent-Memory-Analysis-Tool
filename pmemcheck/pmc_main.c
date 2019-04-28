@@ -213,6 +213,8 @@ static void child_task() {
     VG_(exit(1));
 }
 
+static void do_writeback(struct pmat_cache_entry *entry);
+
 /**
 * \brief State to string change for information purposes.
 */
@@ -328,8 +330,8 @@ print_store_stats(void)
             total += tmp->size;
             ++i;
         }
-        VG_(umsg)("Total memory not made persistent: %lu\n", total);
     }
+    VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
 }
 
 /**
@@ -768,21 +770,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
             struct pmat_registered_file file;
             for (int i = 0; i < nEntries; i++) {
                 entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
-                /*for (Addr addr = entry->addr; addr < ((UWord) entry->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
-                    VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
-                }
-                VG_(emit)("|FLUSH;0x%lx,0x%llx", entry->addr, CACHELINE_SIZE);
-                VG_(emit)("|FENCE");
-                */
-                int sz = 1;
-                VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-                file.addr = entry->addr; 
-                struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
-                tl_assert(realFile && "Unable to find descriptor associated with an address!");
-                VG_(write)(pmem.pmat_pipe_fd[1], &realFile->descr, sizeof(realFile->descr));
-                VG_(write)(pmem.pmat_pipe_fd[1], entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
-                VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
-                VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+                do_writeback(entry);
             }
         }
     }
@@ -1123,20 +1111,49 @@ do_fence(void)
 {
     if (pmem.log_stores)
         VG_(emit)("|FENCE");
-
-    /* go through the stores and remove all flushed */
-    VG_(OSetGen_ResetIter)(pmem.pmem_stores);
-    struct pmem_st *being_fenced = NULL;
-    while ((being_fenced = VG_(OSetGen_Next)(pmem.pmem_stores)) != NULL) {
-        if (being_fenced->state == STST_FLUSHED) {
-            /* remove it from the oset */
-            struct pmem_st temp = *being_fenced;
-            VG_(OSetGen_Remove)(pmem.pmem_stores, being_fenced);
-            VG_(OSetGen_FreeNode)(pmem.pmem_stores, being_fenced);
-            /* reset the iterator (remove invalidated store) */
-            VG_(OSetGen_ResetIterAt)(pmem.pmem_stores, &temp);
+    
+    if (VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries) == 0) {
+        return;
+    }
+    ThreadId tid = VG_(get_running_tid)();
+    XArray *arr = VG_(newXA)(VG_(malloc), "pmat_wb_fence", VG_(free), sizeof(struct pmat_write_buffer_entry));  
+    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    struct pmat_write_buffer_entry *wbentry;
+    while ( (wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
+        if (wbentry->tid == tid) {
+            VG_(addToXA)(arr, &wbentry); 
         }
     }
+    Word nEntries = VG_(sizeXA)(arr);
+    VG_(emit)("Fencing %u entries for tid %lu\n", nEntries, tid);
+    for (int i = 0; i < nEntries; i++) {
+        wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
+        int sz = 1;
+        VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+        struct pmat_registered_file file;
+        file.addr = wbentry->entry->addr; 
+        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        tl_assert(realFile && "Unable to find descriptor associated with an address!");
+        VG_(write)(pmem.pmat_pipe_fd[1], wbentry->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
+        VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
+        VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
+    }
+
+
+    /* go through the stores and remove all flushed */
+    //VG_(OSetGen_ResetIter)(pmem.pmem_stores);
+    //struct pmem_st *being_fenced = NULL;
+    //while ((being_fenced = VG_(OSetGen_Next)(pmem.pmem_stores)) != NULL) {
+    //    if (being_fenced->state == STST_FLUSHED) {
+    //        /* remove it from the oset */
+    //        struct pmem_st temp = *being_fenced;
+    //        VG_(OSetGen_Remove)(pmem.pmem_stores, being_fenced);
+    //        VG_(OSetGen_FreeNode)(pmem.pmem_stores, being_fenced);
+    //        /* reset the iterator (remove invalidated store) */
+    //        VG_(OSetGen_ResetIterAt)(pmem.pmem_stores, &temp);
+    //    }
+    //}
 }
 
 static void
@@ -1150,8 +1167,8 @@ beforeFlush() {
 }
 
 static void do_writeback(struct pmat_cache_entry *entry) {
-    int sz = 1;
-    VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+    VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
+    ThreadId tid = VG_(get_running_tid)();
     struct pmat_registered_file file;
     file.addr = entry->addr; 
     struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
@@ -1166,28 +1183,47 @@ static void do_writeback(struct pmat_cache_entry *entry) {
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
     VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
     
+    // See if this entry already exists
+    struct pmat_write_buffer_entry wblookup;
+    wblookup.entry = entry;
+    struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
+    if (exist) {
+        VG_(emit)("Flushing older entry for address %lx\n", exist->entry->addr);
+        // Flush the original entry first...
+        int sz = 1;
+        VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+        VG_(write)(pmem.pmat_pipe_fd[1], exist->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
+        VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
+        VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
+    }
+
     // Store Buffer
-    VG_(OSetGen_Insert)(pmem.pmat_write_buffer_entries, entry);
+    struct pmat_write_buffer_entry *wbentry = VG_(OSetGen_AllocNode)(pmem.pmat_write_buffer_entries, (SizeT) sizeof(struct pmat_write_buffer_entry));
+    wbentry->entry = entry;
+    wbentry->tid = tid;
+    VG_(OSetGen_Insert)(pmem.pmat_write_buffer_entries, wbentry);
     if (VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries) > NUM_WB_ENTRIES) {
         XArray *arr = VG_(newXA)(VG_(malloc), "pmat_wb_eviction", VG_(free), sizeof(struct pmat_write_buffer_entry));  
-        VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+        VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
         struct pmat_write_buffer_entry *entry;
-        while ( (entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries)) ) {
+        while ( (entry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
             if (VG_(random)(NULL) % 2) {
                 VG_(addToXA)(arr, &entry); 
             }
         }
         Word nEntries = VG_(sizeXA)(arr);
         for (int i = 0; i < nEntries; i++) {
-            entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
+            wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
             int sz = 1;
             VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-            file.addr = entry->addr; 
+            file.addr = wbentry->entry->addr; 
             struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
             tl_assert(realFile && "Unable to find descriptor associated with an address!");
-            VG_(write)(pmem.pmat_pipe_fd[1], entry, sizeof(struct pmat_write_buffer_entry));
-            VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, entry);
-            VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, entry);
+            VG_(write)(pmem.pmat_pipe_fd[1], wbentry->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+            VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
+            VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
+            VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
         }
     }
 }
