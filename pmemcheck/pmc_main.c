@@ -207,7 +207,20 @@ static void child_task() {
                 tl_assert(retval == sizeof(struct pmat_cache_entry) + CACHELINE_SIZE && "Read pmat_cache_entry but too small...");
                 VG_(memcpy)((char *) entry->addr, entry->data, CACHELINE_SIZE);
                 VG_(emit)("Flush: (0x%lx, 0x%lx)\n", entry->addr, CACHELINE_SIZE);
-            }
+
+                // Perform verification...
+                if (VG_(random)(NULL) % 10 == 0) {
+                    struct pmat_registered_file file;
+                    file.addr = entry->addr;
+                    struct pmat_registered_file *foundFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+                    if (foundFile->verify) {
+                        if (!foundFile->verify((void *) foundFile->addr, foundFile->size)) {
+                            VG_(emit)("Verification function with address %lx for %lx has failed!\n", foundFile->verify, foundFile->addr);
+                        }
+                    }
+                }
+                VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+            } 
         }
     }
     VG_(exit(1));
@@ -1772,7 +1785,25 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 
     switch (arg[0]) {
         case VG_USERREQ__PMC_VERIFICATION: {
+            // Add to our registered file
+            struct pmat_registered_file file;
+            file.addr = arg[1];
+            struct pmat_registered_file *foundFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+            tl_assert(foundFile && "Client attempted to register a callback for a file that does not exist!");
+            foundFile->verify = (pmat_verification_fn) arg[2];
             VG_(emit)("Obtained client request for verification function %lx at  address %lx\n", arg[2], arg[1]);
+            // Kill current child...
+            int sz = -1;
+            VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
+            VG_(close)(pmem.pmat_pipe_fd[0]);
+            VG_(close)(pmem.pmat_pipe_fd[1]);
+
+            // Create new child...
+            VG_(pipe)(pmem.pmat_pipe_fd);
+            pid_t pid = VG_(fork)();
+            if (pid == 0) {
+                child_task();
+            }
             break;                                       
         }
         case VG_USERREQ__PMC_REGISTER_PMEM_MAPPING: {

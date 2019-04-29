@@ -35,10 +35,13 @@ struct pmat_cache_entry {
    char data[0];
 };
 
+typedef int (*pmat_verification_fn)(void *, SizeT sz);
+
 struct pmat_registered_file {
     UWord descr;
     Addr addr; 
     UWord size;
+    pmat_verification_fn verify; 
 };
 
 struct pmat_write_buffer_entry {
