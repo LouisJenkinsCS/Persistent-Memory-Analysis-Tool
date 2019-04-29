@@ -1766,10 +1766,15 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_RESERVED8 != arg[0]
             && VG_USERREQ__PMC_RESERVED9 != arg[0]
             && VG_USERREQ__PMC_RESERVED10 != arg[0]
+            && VG_USERREQ__PMC_VERIFICATION != arg[0]
             )
         return False;
 
     switch (arg[0]) {
+        case VG_USERREQ__PMC_VERIFICATION: {
+            VG_(emit)("Obtained client request for verification function %lx at  address %lx\n", arg[2], arg[1]);
+            break;                                       
+        }
         case VG_USERREQ__PMC_REGISTER_PMEM_MAPPING: {
             struct pmem_st temp_info = {0};
             temp_info.addr = arg[1];

@@ -82,11 +82,18 @@ typedef
        VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE,
        VG_USERREQ__PMC_RESERVED6,  /* Do not use. */
        VG_USERREQ__PMC_EMIT_LOG,
+       VG_USERREQ__PMC_VERIFICATION,
    } Vg_PMemCheckClientRequest;
 
 
 
 /* Client-code macros to manipulate pmem mappings */
+
+/** Register a verification function to a particular mapping */
+#define VALGRIND_PMC_VERIFICATION(_qzz_addr, _qzz_fnptr) \
+    VALGRIND_DO_CLIENT_REQUEST_EXPR(0 /* default return */, \
+            VG_USERREQ__PMC_VERIFICATION, \
+            (_qzz_addr), (_qzz_fnptr), 0, 0, 0)
 
 /** Register a persistent memory mapping region */
 #define VALGRIND_PMC_REGISTER_PMEM_MAPPING(_qzz_addr, _qzz_len)             \
