@@ -1,6 +1,18 @@
 # Design of the Persistent Memory Analysis Tool (fork of pmemcheck)
 
-(W.I.P)
+## Replicating Client State via a Shadow Heap
+
+* Pointers declared to the Valgrind host as being 'persistent' get their own shadow heap
+  * Shadow heap represents a _file_ that is written to in a way that simulates the out-of-order nature of the CPU
+  * Due to constructs such as `mmap` and `shm*` being unavailable in Valgrind, we use `lseek` and `write`
+    * Valgrind builds without linking in standard libraries, likely for portability reasons
+    * Makes many assumptions that would 'break' Valgrind if circumvented without non-trivial effort to remedy
+* Replicated Client State that is written to file is used by a child process
+  * Valgrind does offer ability to `fork` and then `execv` a verification process
+    * Verification will be provided the file name, and have freedom to mmap into memory as they please to verify.
+  * When it is time to verify, a 'fork' of the file must be created via copying into a newer file
+    * Older file is give to verification process which can then begin immediately.
+    
 
 ## Store/Flush/Fence Tracing
 
@@ -21,5 +33,7 @@
 
 ## Verification
 
-* When a new persistent memory address is created, we fork
-  * The child, of course, gets an up-to-date state of the world.
+* A process is created based on user arguments and is passed a file name
+  * This file can then be `mmap`'d and verified
+  * Not as fast as actual persistent memory, but necessary compromise
+  * Multiple verification processes can be performed concurrently.
