@@ -37,3 +37,10 @@
   * This file can then be `mmap`'d and verified
   * Not as fast as actual persistent memory, but necessary compromise
   * Multiple verification processes can be performed concurrently.
+* Given a system with N threads, at most N - 2 verification processes will occur concurrently
+  * Thread serialization in Valgrind makes it 'not so bad' to do so since only one thread runs at any given time
+  * Child will keep an array of `(pid, fileName)` associatied with current running grandchildren and their files
+  * When a grandchild finishes, can collect return value for verification; if bad, keep bad `fileName` so can be analyzed
+  * Child will poll on pipe for data, and while not busy, will check results of verification
+  * Further requests for verification are queued up for later
+* Saving all files provides option to attempt 'recovery' from each individual file, to further test verification.
