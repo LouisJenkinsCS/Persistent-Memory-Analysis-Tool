@@ -44,3 +44,12 @@
   * Child will poll on pipe for data, and while not busy, will check results of verification
   * Further requests for verification are queued up for later
 * Saving all files provides option to attempt 'recovery' from each individual file, to further test verification.
+
+
+## Intermediate Steps
+
+* Maintain only the parent; parent writes directly to a file; forks to spawn child process to handle verification on file
+  * Experiment with `fork` to create a child with current write-buffer and cache
+    * Child will `fork` to create grandchild verification process and will monitor it
+    * Child still has access to write-buffer and cache and so can handle reporting errors
+  * Parent has to handle creating copy of 'file' and updating it, but is more natural and intuitive
