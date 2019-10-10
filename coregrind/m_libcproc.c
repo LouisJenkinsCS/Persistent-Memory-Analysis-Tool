@@ -843,9 +843,12 @@ Int VG_(ptrace) ( Int request, Int pid, void *addr, void *data )
    Fork
    ------------------------------------------------------------------ */
 
-void VG_(ftruncate)(HChar *path, UWord length) {
+void VG_(ftruncate)(Int fd, UWord length) {
    #if defined(VGO_linux)
-   SysRes res = VG_(do_syscall2)(__NR_ftruncate, path, length);
+   SysRes res = VG_(do_syscall2)(__NR_ftruncate, fd, length);
+   if (sr_isError(res)) {
+      VG_(emit)("ftruncate failed with errno: %d\n", sr_Err(res));
+   }
    #else
    #error Unknown OS
    #endif

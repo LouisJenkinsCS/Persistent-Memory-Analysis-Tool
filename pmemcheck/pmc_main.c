@@ -293,11 +293,10 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
         }
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
-    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_WRITE, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
+    /*
+    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_WRITE | VKI_PROT_READ | VKI_PROT_EXEC, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
     VG_(emit)("MMAP returned 0x%lx for file '%s'; 'mmap(0x%lx, 0x%lx, %lu, %lu, %lu, 0x%lx)'\n", addr, realFile->name, NULL, realFile->size, VKI_PROT_READ | VKI_PROT_WRITE, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
-    if (!addr) {
-        tl_assert(0);
-    }
+    tl_assert(addr);
     // TODO: Vectorize?
     for (int i = 0; i < CACHELINE_SIZE; i++) {
         if (entry->entry->dirtyBits & (1 << i)) {
@@ -306,6 +305,17 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
         }
     }
     VG_(munmap)(addr, realFile->size);
+    */
+    VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_CUR);
+    char cacheline[CACHELINE_SIZE];
+    VG_(read)(realFile->descr, cacheline, CACHELINE_SIZE);
+    for (int i = 0; i < CACHELINE_SIZE; i++) {
+        if (entry->entry->dirtyBits & (1 << i)) {
+            cacheline[i] = entry->entry->data[i];
+        }
+    }
+    VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_CUR);
+    VG_(write)(realFile->descr, cacheline, CACHELINE_SIZE);
 }
 
 /**
@@ -1758,7 +1768,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
                 tl_assert(0);
             }
             file->descr = sr_Res(res);
-            VG_(ftruncate)(file->name, file->size);
+            VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
             VG_(emit)("Registered '%s' to fd #%d\n", file->name, file->descr);
