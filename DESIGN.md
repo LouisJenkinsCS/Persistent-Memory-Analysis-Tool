@@ -45,6 +45,18 @@
   * Further requests for verification are queued up for later
 * Saving all files provides option to attempt 'recovery' from each individual file, to further test verification.
 
+## Debug Information
+
+* When a verification process fails, we do the following...
+  * Do not delete the faulty binary file that is the 'shadow heap'...
+  * Associate with the prefix of the faulty binary file, the state of...
+    * The cache, including the location of _all_ stores that have not yet been written back
+    * The write-buffer, including the location of _all_ flushes and affiliated stores...
+    * Perhaps the state of all the other threads when the power-failure occurred?
+  * Should be possible to determine "where", "when", and let the programmer infer "why"
+    * A `store` at `program:L126` with did not persist (show value written)
+    * A `flush` at `program:L127` was did not reach a `fence` and was not written-back (show flush and store info)
+    * Show time may be helpful, as it can identify how long this leak has occurred (microseconds, that's okay... minutes? Thats bad!)
 
 ## Intermediate Steps
 
