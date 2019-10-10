@@ -62,16 +62,6 @@ cmp_pmat_registered_files1(const void *key, const void *elem)
         return 0;
 }
 
-
-Word 
-cmp_pmat_registered_files2(const void *key, const void *elem) 
-{
-    const struct pmat_registered_file *lhs = (const struct pmat_registered_file *) (key);    
-    const struct pmat_registered_file *rhs = (const struct pmat_registered_file *) (elem);
-
-    return lhs->descr - rhs->descr;
-}
-
 /**
  * \brief Check if regions overlap.
  * \param lhs Region to check.

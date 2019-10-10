@@ -17,6 +17,7 @@
  * This program is based on lackey, cachegrind and memcheck.
  */
 #include <sys/param.h>
+#include <sys/ipc.h>
 #include "pub_tool_libcfile.h"
 #include <fcntl.h>
 #include "pub_tool_oset.h"
@@ -32,7 +33,6 @@
 #include "pub_tool_machine.h"
 #include "pub_tool_stacktrace.h"
 #include "pub_tool_debuginfo.h"
-
 #include "pmemcheck.h"
 #include "pmc_include.h"
 
@@ -64,7 +64,7 @@
 static struct pmem_ops {
     /** Set of stores to persistent memory. */
     OSet *pmem_stores;
-    
+
     /** Pipe between parent and child */
     Int pmat_pipe_fd[2];
     
@@ -77,10 +77,14 @@ static struct pmem_ops {
     /* Entries in cache; TODO: Use a Pool */
     OSet *pmat_cache_entries;
     
-    /** Store buffer for to-be-written-back stores */
+    /** Store buffer for to-be-written-back stores. */
     OSet *pmat_write_buffer_entries;
 
-    Word pmat_fd_descr;
+    /** Number of verifications hat have been run so far. */
+    Word pmat_num_verifications;
+
+    /** Current shadow heap file. */
+    char *pmat_shadow_heap_name;
 
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
@@ -179,51 +183,9 @@ static ULong sblocks = 0;
 static Bool
 is_pmem_access(Addr addr, SizeT size)
 {
-    struct pmem_st tmp = {0};
-    tmp.size = size;
-    tmp.addr = addr;
-    return VG_(OSetGen_Contains)(pmem.pmem_mappings, &tmp);
-}
-
-static void child_task() {
-    VG_(emit)("Child running and terminating...\n");
-    while (1) {
-        // Child compares based on 'descr' so it can find the Addr associated with the descriptor
-        int sz = 0;
-        int retval = VG_(read)(pmem.pmat_pipe_fd[0], &sz, sizeof(sz));
-        if (retval == -1) {
-            VG_(emit)("Got a return value of -1, exiting...\n");
-            VG_(exit)(1);
-        }
-        if (retval == sizeof(sz)) {
-            if (sz == -1) {
-                VG_(emit)("Got size of -1, exiting...\n");
-                VG_(exit)(1);
-            } else if (sz == 1) {
-                // Flush event
-                VG_(emit)("Got size of 1, parsing flushed cache line...\n");
-                struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
-                int retval = VG_(read)(pmem.pmat_pipe_fd[0], entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
-                tl_assert(retval == sizeof(struct pmat_cache_entry) + CACHELINE_SIZE && "Read pmat_cache_entry but too small...");
-                VG_(memcpy)((char *) entry->addr, entry->data, CACHELINE_SIZE);
-                VG_(emit)("Flush: (0x%lx, 0x%lx)\n", entry->addr, CACHELINE_SIZE);
-
-                // Perform verification...
-                if (VG_(random)(NULL) % 10 == 0) {
-                    struct pmat_registered_file file;
-                    file.addr = entry->addr;
-                    struct pmat_registered_file *foundFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
-                    if (foundFile->verify) {
-                        if (!foundFile->verify((void *) foundFile->addr, foundFile->size)) {
-                            VG_(emit)("Verification function with address %lx for %lx has failed!\n", foundFile->verify, foundFile->addr);
-                        }
-                    }
-                }
-                VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
-            } 
-        }
-    }
-    VG_(exit(1));
+    struct pmat_cache_entry entry;
+    entry.addr = TRIM_CACHELINE(addr);
+    return VG_(OSetGen_Contains)(pmem.pmat_registered_files, &entry);
 }
 
 static void do_writeback(struct pmat_cache_entry *entry);
@@ -557,6 +519,10 @@ merge_stores(struct pmem_st *to_merge,
 
 typedef void (*split_clb)(struct pmem_st *store,  OSet *set, Bool preallocated);
 
+static void maybe_simulate_crash(void) {
+
+}
+
 /**
  * \brief Free store if it was preallocated.
  *
@@ -744,8 +710,11 @@ handle_with_mult_stores(struct pmem_st *store)
 static VG_REGPARM(3) void
 trace_pmem_store(Addr addr, SizeT size, UWord value)
 {
-    if (LIKELY(!is_pmem_access(addr, size)))
+    // Check if this is a store to registered memory
+    if (LIKELY(!is_pmem_access(addr, size))) {
+        maybe_simulate_crash();
         return;
+    }
         
     Int startOffset = OFFSET_CACHELINE(addr);
     Int endOffset = OFFSET_CACHELINE(addr + size);
@@ -760,6 +729,8 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
     if (exists) {
         VG_(memcpy)(exists->data + startOffset, &value, size);
+        // Set bits being written to as dirty...
+        exists->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
         // TODO: This may end up going to a pool to significantly speed things up
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
         return;
@@ -767,6 +738,8 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         // Create a new entry...
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
+        exists->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
+
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
 
         // Check if we need to evict...
@@ -787,22 +760,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
             }
         }
     }
-
-
-    /* log the store, regardless if it is a double store */
-  /*  if (pmem.log_stores) {
-        VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, value, size);
-        if (pmem.store_traces)
-            pp_store_trace(store, pmem.store_traces_depth);
-    }
-    if (pmem.track_multiple_stores)
-        handle_with_mult_stores(store);
-    else
-        add_and_merge_store(store);
-*/
-    /* do transaction check */
-/*    handle_tx_store(store);
-*/
+    maybe_simulate_crash();
 }
 
 /**
@@ -1122,6 +1080,8 @@ add_event_dw(IRSB *sb, IRAtom *daddr, Int dsize, IRAtom *value)
 static void
 do_fence(void)
 {
+    // Perhaps simulate _before_ simulating the fence
+    maybe_simulate_crash();
     if (pmem.log_stores)
         VG_(emit)("|FENCE");
     
@@ -1152,21 +1112,7 @@ do_fence(void)
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
     }
-
-
-    /* go through the stores and remove all flushed */
-    //VG_(OSetGen_ResetIter)(pmem.pmem_stores);
-    //struct pmem_st *being_fenced = NULL;
-    //while ((being_fenced = VG_(OSetGen_Next)(pmem.pmem_stores)) != NULL) {
-    //    if (being_fenced->state == STST_FLUSHED) {
-    //        /* remove it from the oset */
-    //        struct pmem_st temp = *being_fenced;
-    //        VG_(OSetGen_Remove)(pmem.pmem_stores, being_fenced);
-    //        VG_(OSetGen_FreeNode)(pmem.pmem_stores, being_fenced);
-    //        /* reset the iterator (remove invalidated store) */
-    //        VG_(OSetGen_ResetIterAt)(pmem.pmem_stores, &temp);
-    //    }
-    //}
+    maybe_simulate_crash();
 }
 
 static void
@@ -1179,12 +1125,17 @@ beforeFlush() {
     VG_(emit)("Called before flush!");
 }
 
+static void write_to_file(struct pmat_write_buffer_entry *entry) {
+    
+}
+
 static void do_writeback(struct pmat_cache_entry *entry) {
     VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
     ThreadId tid = VG_(get_running_tid)();
     struct pmat_registered_file file;
     file.addr = entry->addr; 
     struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+    // TODO: May want to move this behind some compile-time preprocessor directive
     if (!realFile) {
         VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
         VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
@@ -1204,8 +1155,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         VG_(emit)("Flushing older entry for address %lx\n", exist->entry->addr);
         // Flush the original entry first...
         int sz = 1;
-        VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-        VG_(write)(pmem.pmat_pipe_fd[1], exist->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+        write_to_file(exist);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
@@ -1229,11 +1179,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         for (int i = 0; i < nEntries; i++) {
             wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
             int sz = 1;
-            VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-            file.addr = wbentry->entry->addr; 
-            struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
-            tl_assert(realFile && "Unable to find descriptor associated with an address!");
-            VG_(write)(pmem.pmat_pipe_fd[1], wbentry->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+            write_to_file(wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
             VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
@@ -1283,6 +1229,7 @@ trace_pmem_flush(Addr addr)
 {
     /* use native cache size for flush */
     do_flush(addr, pmem.flush_align_size);
+    maybe_simulate_crash();
 }
 
 /**
@@ -1392,13 +1339,7 @@ register_new_file(Int fd, UWord base, UWord size, UWord offset)
     VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
     VG_(close)(pmem.pmat_pipe_fd[0]);
     VG_(close)(pmem.pmat_pipe_fd[1]);
-    
-    // Create new child...
-    VG_(pipe)(pmem.pmat_pipe_fd);
-    pid_t pid = VG_(fork)();
-    if (pid == 0) {
-        child_task();
-    }
+    pmem.pmat_spawn_child = True;
 
     /* logging_on shall have no effect on this */
      
@@ -1593,10 +1534,13 @@ pmc_instrument(VgCallbackClosure *closure,
             case Ist_WrTmp:
             case Ist_Exit:
             case Ist_Dirty:
-                /* for now we are not interested in any of the above */
-                addStmtToIRSB(sbOut, st);
-                break;
 
+                /* for now we are not interested in any of the above */
+                VG_(emit)("[%d] ", i);
+                ppIRStmt(st);
+                VG_(emit)("\n");
+                addStmtToIRSB(sbOut, st);
+                break;                
             case Ist_Flush: {
                 //add_simple_event(sbOut, beforeFlush, "beforeFlush");
                 addStmtToIRSB(sbOut, st);
@@ -1748,6 +1692,7 @@ static Bool
 pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 {
     if (!VG_IS_TOOL_USERREQ('P', 'C', arg[0])
+            && VG_USERREQ__PMC_FORCE_SIMULATE_CRASH != arg[0]
             && VG_USERREQ__PMC_REGISTER_PMEM_MAPPING != arg[0]
             && VG_USERREQ__PMC_REGISTER_PMEM_FILE != arg[0]
             && VG_USERREQ__PMC_REMOVE_PMEM_MAPPING != arg[0]
@@ -1785,26 +1730,14 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 
     switch (arg[0]) {
         case VG_USERREQ__PMC_VERIFICATION: {
-            // Add to our registered file
-            struct pmat_registered_file file;
-            file.addr = arg[1];
-            struct pmat_registered_file *foundFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
-            tl_assert(foundFile && "Client attempted to register a callback for a file that does not exist!");
-            foundFile->verify = (pmat_verification_fn) arg[2];
-            VG_(emit)("Obtained client request for verification function %lx at  address %lx\n", arg[2], arg[1]);
-            // Kill current child...
-            int sz = -1;
-            VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-            VG_(close)(pmem.pmat_pipe_fd[0]);
-            VG_(close)(pmem.pmat_pipe_fd[1]);
-
-            // Create new child...
-            VG_(pipe)(pmem.pmat_pipe_fd);
-            pid_t pid = VG_(fork)();
-            if (pid == 0) {
-                child_task();
-            }
+            // TODO: Need to actually appropriately handle this under new model;
+            // Should now only take an address; verification program should have
+            // specific arguments and should be specified by command-line.
             break;                                       
+        }
+        case VG_USERREQ__PMC_FORCE_SIMULATE_CRASH: {
+            // TODO: Actually handle this case!
+            break;
         }
         case VG_USERREQ__PMC_REGISTER_PMEM_MAPPING: {
             struct pmem_st temp_info = {0};
@@ -2016,7 +1949,6 @@ pmc_post_clo_init(void)
 {
     pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
     pmem.pmat_write_buffer_entries = VG_(OSetGen_Create)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free));
-    pmem.pmat_fd_descr = 0;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,

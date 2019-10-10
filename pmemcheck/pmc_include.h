@@ -31,8 +31,10 @@ struct pmem_st {
 };
 
 struct pmat_cache_entry {
-   Addr addr;
-   char data[0];
+    // Bitmap to keep track of dirty bits
+    Long dirtyBits;
+    Addr addr;
+    char data[0];
 };
 
 typedef int (*pmat_verification_fn)(void *, SizeT sz);
