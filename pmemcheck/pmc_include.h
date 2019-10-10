@@ -40,6 +40,7 @@ struct pmat_cache_entry {
 typedef int (*pmat_verification_fn)(void *, SizeT sz);
 
 struct pmat_registered_file {
+    char *name;
     UWord descr;
     Addr addr; 
     UWord size;

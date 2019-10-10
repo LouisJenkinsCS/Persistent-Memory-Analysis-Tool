@@ -83,9 +83,6 @@ static struct pmem_ops {
     /** Number of verifications hat have been run so far. */
     Word pmat_num_verifications;
 
-    /** Current shadow heap file. */
-    char *pmat_shadow_heap_name;
-
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
 
@@ -277,6 +274,27 @@ print_multiple_stores(void)
         VG_(umsg)("\tAddress: 0x%lx\tsize: %llu\tstate: %s\n",
                 tmp->addr, tmp->size, store_state_to_string(tmp->state));
     }
+}
+
+static void write_to_file(struct pmat_write_buffer_entry *entry) {
+    // Find the file associated with it...
+    struct pmat_registered_file file;
+    file.addr = entry->entry->addr; 
+    struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+    
+    // TODO: May want to move this behind some compile-time preprocessor directive
+    // Check to see if file exists...
+    if (!realFile) {
+        VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
+        VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+        struct pmat_registered_file *tmp;
+        while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+            VG_(emit)("File Found: (%lx, 0x%lx, 0x%lx)\n", tmp->descr, tmp->addr, tmp->size);
+        }
+    }
+    tl_assert(realFile && "Unable to find descriptor associated with an address!");
+    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_READ | VKI_PROT_WRITE, VKI_MAP_PRIVATE, realFile->descr, file.addr - realFile->addr);
+    
 }
 
 /**
@@ -753,7 +771,6 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
             }
             // TODO: Remove selected entries!
             Word nEntries = VG_(sizeXA)(arr);
-            struct pmat_registered_file file;
             for (int i = 0; i < nEntries; i++) {
                 entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
                 do_writeback(entry);
@@ -1101,13 +1118,7 @@ do_fence(void)
     VG_(emit)("Fencing %u entries for tid %lu\n", nEntries, tid);
     for (int i = 0; i < nEntries; i++) {
         wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
-        int sz = 1;
-        VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-        struct pmat_registered_file file;
-        file.addr = wbentry->entry->addr; 
-        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
-        tl_assert(realFile && "Unable to find descriptor associated with an address!");
-        VG_(write)(pmem.pmat_pipe_fd[1], wbentry->entry, sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+        write_to_file(wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
@@ -1125,9 +1136,6 @@ beforeFlush() {
     VG_(emit)("Called before flush!");
 }
 
-static void write_to_file(struct pmat_write_buffer_entry *entry) {
-    
-}
 
 static void do_writeback(struct pmat_cache_entry *entry) {
     VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
@@ -1327,23 +1335,6 @@ register_new_file(Int fd, UWord base, UWord size, UWord offset)
     }
 
     file_name[read_length] = 0;
-    int pmemfd = pmem.pmat_fd_descr++;
-    struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, (SizeT) sizeof(struct pmat_registered_file));
-    file->addr = base;
-    file->size = size;
-    file->descr = pmemfd;
-    VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
-    
-    // Kill current child...
-    int sz = -1;
-    VG_(write)(pmem.pmat_pipe_fd[1], &sz, sizeof(sz));
-    VG_(close)(pmem.pmat_pipe_fd[0]);
-    VG_(close)(pmem.pmat_pipe_fd[1]);
-    pmem.pmat_spawn_child = True;
-
-    /* logging_on shall have no effect on this */
-     
-
     if (pmem.log_stores)
         VG_(emit)("|REGISTER_FILE;%s;0x%lx;0x%lx;0x%lx", file_name, base,
                 size, offset);
@@ -1724,15 +1715,29 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_RESERVED8 != arg[0]
             && VG_USERREQ__PMC_RESERVED9 != arg[0]
             && VG_USERREQ__PMC_RESERVED10 != arg[0]
-            && VG_USERREQ__PMC_VERIFICATION != arg[0]
+            && VG_USERREQ__PMAT_REGISTER != arg[0]
             )
         return False;
 
     switch (arg[0]) {
-        case VG_USERREQ__PMC_VERIFICATION: {
+        case VG_USERREQ__PMAT_REGISTER: {
             // TODO: Need to actually appropriately handle this under new model;
             // Should now only take an address; verification program should have
             // specific arguments and should be specified by command-line.
+            HChar *_name = arg[1];
+            Addr addr = arg[2];
+            UWord size = arg[3];
+
+            // Create copy of 'name' in case user passes in non-constant heap-allocated data
+            HChar *name = VG_(malloc)("File Name Copy", VG_(strlen)(_name));
+            VG_(strcpy)(name, _name);
+            struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, (SizeT) sizeof(struct pmat_registered_file));
+            file->addr = addr;
+            file->size = size;
+            file->name = name;
+            file->descr = sr_Res(VG_(open)(file->name, VKI_O_CREAT | VKI_O_RDWR, 777));
+            VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
+            
             break;                                       
         }
         case VG_USERREQ__PMC_FORCE_SIMULATE_CRASH: {

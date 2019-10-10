@@ -843,6 +843,15 @@ Int VG_(ptrace) ( Int request, Int pid, void *addr, void *data )
    Fork
    ------------------------------------------------------------------ */
 
+Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset) {
+   #if defined(VGO_linux)
+   SysRes res = VG_(do_syscall6)(__NR_mmap, addr, length, prot, flags, fd, offset);
+   return sr_Res(res);
+#  else
+#    error "Unknown OS"   
+#  endif
+}
+
 Int VG_(fork) ( void )
 {
 #  if defined(VGP_arm64_linux)
