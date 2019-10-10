@@ -180,9 +180,9 @@ static ULong sblocks = 0;
 static Bool
 is_pmem_access(Addr addr, SizeT size)
 {
-    struct pmat_cache_entry entry;
-    entry.addr = TRIM_CACHELINE(addr);
-    return VG_(OSetGen_Contains)(pmem.pmat_registered_files, &entry);
+    struct pmat_registered_file file;
+    file.addr = TRIM_CACHELINE(addr);
+    return VG_(OSetGen_Contains)(pmem.pmat_registered_files, &file);
 }
 
 static void do_writeback(struct pmat_cache_entry *entry);
@@ -293,8 +293,19 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
         }
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
-    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_READ | VKI_PROT_WRITE, VKI_MAP_PRIVATE, realFile->descr, file.addr - realFile->addr);
-    
+    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_WRITE, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
+    VG_(emit)("MMAP returned 0x%lx for file '%s'; 'mmap(0x%lx, 0x%lx, %lu, %lu, %lu, 0x%lx)'\n", addr, realFile->name, NULL, realFile->size, VKI_PROT_READ | VKI_PROT_WRITE, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
+    if (!addr) {
+        tl_assert(0);
+    }
+    // TODO: Vectorize?
+    for (int i = 0; i < CACHELINE_SIZE; i++) {
+        if (entry->entry->dirtyBits & (1 << i)) {
+            VG_(emit)("Writing to '%s' at addr 0x%lx", realFile->name, addr + i);
+            *(char *) (addr + i) = entry->entry->data[i];
+        }
+    }
+    VG_(munmap)(addr, realFile->size);
 }
 
 /**
@@ -736,30 +747,37 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         
     Int startOffset = OFFSET_CACHELINE(addr);
     Int endOffset = OFFSET_CACHELINE(addr + size);
-    tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
+    if (addr + size <= CACHELINE_SIZE) endOffset = CACHELINE_SIZE;
+    if (startOffset > endOffset) {
+        VG_(emit("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)", addr, addr + size, startOffset, endOffset));
+        //return;
+    }
+    //tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
     
-    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
-            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
-    entry->addr = TRIM_CACHELINE(addr);
+    struct pmat_cache_entry entry;
+    entry.addr = TRIM_CACHELINE(addr);
     // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
     // If the cache line has not been written back, write it into that cache-line.
-    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
+    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
     if (exists) {
+        VG_(emit)("Updating cache-line for %d\n", TRIM_CACHELINE(addr));
         VG_(memcpy)(exists->data + startOffset, &value, size);
         // Set bits being written to as dirty...
-        exists->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
-        // TODO: This may end up going to a pool to significantly speed things up
-        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+        exists->dirtyBits |= ((1 << size) - 1) << startOffset;
         return;
     } else {
+        VG_(emit)("Creating cache-line for %d\n", TRIM_CACHELINE(addr));
         // Create a new entry...
+        struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
+            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+        entry->addr = TRIM_CACHELINE(addr);
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
-        exists->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
+        entry->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
 
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
-
+        VG_(emit)("Checking if we need to evict...\n");
         // Check if we need to evict...
         if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > NUM_CACHE_ENTRIES) {
             XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
@@ -1525,11 +1543,7 @@ pmc_instrument(VgCallbackClosure *closure,
             case Ist_WrTmp:
             case Ist_Exit:
             case Ist_Dirty:
-
                 /* for now we are not interested in any of the above */
-                VG_(emit)("[%d] ", i);
-                ppIRStmt(st);
-                VG_(emit)("\n");
                 addStmtToIRSB(sbOut, st);
                 break;                
             case Ist_Flush: {
@@ -1683,7 +1697,7 @@ static Bool
 pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 {
     if (!VG_IS_TOOL_USERREQ('P', 'C', arg[0])
-            && VG_USERREQ__PMC_FORCE_SIMULATE_CRASH != arg[0]
+            && VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH != arg[0]
             && VG_USERREQ__PMC_REGISTER_PMEM_MAPPING != arg[0]
             && VG_USERREQ__PMC_REGISTER_PMEM_FILE != arg[0]
             && VG_USERREQ__PMC_REMOVE_PMEM_MAPPING != arg[0]
@@ -1705,6 +1719,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_ADD_THREAD_TO_TX_N != arg[0]
             && VG_USERREQ__PMC_REMOVE_THREAD_FROM_TX_N != arg[0]
             && VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE != arg[0]
+            && VG_USERREQ__PMC_PMAT_REGISTER != arg[0]
             && VG_USERREQ__PMC_RESERVED1 != arg[0]
             && VG_USERREQ__PMC_RESERVED2 != arg[0]
             && VG_USERREQ__PMC_RESERVED3 != arg[0]
@@ -1713,34 +1728,43 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_RESERVED6 != arg[0]
             && VG_USERREQ__PMC_RESERVED7 != arg[0]
             && VG_USERREQ__PMC_RESERVED8 != arg[0]
-            && VG_USERREQ__PMC_RESERVED9 != arg[0]
-            && VG_USERREQ__PMC_RESERVED10 != arg[0]
-            && VG_USERREQ__PMAT_REGISTER != arg[0]
             )
         return False;
 
     switch (arg[0]) {
-        case VG_USERREQ__PMAT_REGISTER: {
+        case VG_USERREQ__PMC_PMAT_REGISTER: {
             // TODO: Need to actually appropriately handle this under new model;
             // Should now only take an address; verification program should have
             // specific arguments and should be specified by command-line.
             HChar *_name = arg[1];
             Addr addr = arg[2];
             UWord size = arg[3];
+            tl_assert(_name && "First argument 'name' must _not_ be NULL!");
+            VG_(emit)("Received VG_USERREQ__PMC_PMAT_REGISTER('%s', 0x%lx, 0x%lx)\n", _name, addr, size);
 
+            
             // Create copy of 'name' in case user passes in non-constant heap-allocated data
             HChar *name = VG_(malloc)("File Name Copy", VG_(strlen)(_name));
+            tl_assert(name);
             VG_(strcpy)(name, _name);
             struct pmat_registered_file *file = VG_(OSetGen_AllocNode)(pmem.pmat_registered_files, (SizeT) sizeof(struct pmat_registered_file));
+            tl_assert(file);
             file->addr = addr;
             file->size = size;
             file->name = name;
-            file->descr = sr_Res(VG_(open)(file->name, VKI_O_CREAT | VKI_O_RDWR, 777));
+            SysRes res = VG_(open)(file->name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+            if (sr_isError(res)) {
+                VG_(emit)("Could not open file '%s'; errno: %d\n", file->name, sr_Err(res));
+                tl_assert(0);
+            }
+            file->descr = sr_Res(res);
+            VG_(ftruncate)(file->name, file->size);
+            tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
-            
-            break;                                       
+            VG_(emit)("Registered '%s' to fd #%d\n", file->name, file->descr);
+            break;
         }
-        case VG_USERREQ__PMC_FORCE_SIMULATE_CRASH: {
+        case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {
             // TODO: Actually handle this case!
             break;
         }
@@ -1895,9 +1919,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         case VG_USERREQ__PMC_RESERVED5:
         case VG_USERREQ__PMC_RESERVED6:
         case VG_USERREQ__PMC_RESERVED7:
-        case VG_USERREQ__PMC_RESERVED8:
-        case VG_USERREQ__PMC_RESERVED9:
-        case VG_USERREQ__PMC_RESERVED10: {
+        case VG_USERREQ__PMC_RESERVED8: {
             VG_(message)(
                     Vg_UserMsg,
                     "Warning: deprecated pmemcheck client request code 0x%llx\n",

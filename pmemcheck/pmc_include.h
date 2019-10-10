@@ -54,8 +54,8 @@ struct pmat_write_buffer_entry {
 
 // Converts addr to cache line addr
 #define CACHELINE_SIZE 64
-#define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
-#define OFFSET_CACHELINE(addr) (addr % CACHELINE_SIZE)
+#define TRIM_CACHELINE(addr) ((addr) &~ (CACHELINE_SIZE - 1))
+#define OFFSET_CACHELINE(addr) ((addr) % CACHELINE_SIZE)
 #define NUM_CACHE_ENTRIES 1024
 #define NUM_WB_ENTRIES 64
 
