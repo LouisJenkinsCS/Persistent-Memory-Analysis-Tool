@@ -32,6 +32,7 @@ struct pmem_st {
 
 struct pmat_cache_entry {
     // Bitmap to keep track of dirty bits
+    OSet *pending;
     Long dirtyBits;
     Addr addr;
     char data[0];

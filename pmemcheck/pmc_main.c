@@ -329,23 +329,32 @@ print_store_stats(void)
 {
     VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
             (pmem.pmat_cache_entries));
-
-    if (VG_(OSetGen_Size)(pmem.pmem_stores) != 0) {
-        VG_(OSetGen_ResetIter)(pmem.pmem_stores);
-        struct pmem_st *tmp;
-        UWord total = 0;
-        Int i = 0;
-        VG_(umsg)("Stores not made persistent properly:\n");
-        while ((tmp = VG_(OSetGen_Next)(pmem.pmem_stores)) != NULL) {
-            VG_(umsg)("[%d] ", i);
-            VG_(pp_ExeContext)(tmp->context);
-            VG_(umsg)("\tAddress: 0x%lx\tsize: %llu\tstate: %s\n",
-                    tmp->addr, tmp->size, store_state_to_string(tmp->state));
-            total += tmp->size;
-            ++i;
+    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    struct pmat_cache_entry *entry;
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+        struct pmat_registered_file file;
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        tl_assert(realFile);
+        VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
+        ExeContext **context;
+        VG_(OSetGen_ResetIter)(entry->pending);
+        while ((context = VG_(OSetGen_Next)(entry->pending))) {
+            VG_(pp_ExeContext)(*context);
         }
     }
+
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
+    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    entry = NULL;
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+        VG_(umsg)("Leaked Store to 0x%lx\n", entry->addr);
+        ExeContext **context;
+        VG_(OSetGen_ResetIter)(entry->pending);
+        while ((context = VG_(OSetGen_Next)(entry->pending))) {
+            VG_(pp_ExeContext)(*context);
+        }
+    }
 }
 
 /**
@@ -518,6 +527,39 @@ cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs)
             return False;
 
     return True;
+}
+
+cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs) {
+    tl_assert(lhs && *lhs && rhs && *rhs);
+
+    if (lhs == rhs || *lhs == *rhs)
+        return 0;
+
+    /* retrieve stacktraces */
+    UInt n_ips1;
+    UInt n_ips2;
+    const Addr *ips1 = VG_(make_StackTrace_from_ExeContext)(*lhs, &n_ips1);
+    const Addr *ips2 = VG_(make_StackTrace_from_ExeContext)(*rhs, &n_ips2);
+
+    /* Must be at least one address in each trace. */
+    tl_assert(n_ips1 >= 1 && n_ips2 >= 1);
+
+    /* different stacktrace depth */
+    if (n_ips1 > n_ips2) return 1;
+    else if (n_ips2 > n_ips1) return -1;
+
+    /* omit memcpy/memset at the top of the callstack */
+    Int i = 0;
+    if ((ips1[0] == ips2[0])
+            || (is_ip_memset_memcpy(ips1[0]) && is_ip_memset_memcpy(ips2[0])))
+        ++i;
+    /* compare instruction pointers */
+    for (; i < n_ips1; i++) {
+        if (ips1[i] > ips2[i]) return 1;
+        else if (ips2[i] > ips1[i]) return -1;
+    }
+
+    return 0;
 }
 
 /**
@@ -757,7 +799,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         
     Int startOffset = OFFSET_CACHELINE(addr);
     Int endOffset = OFFSET_CACHELINE(addr + size);
-    if (addr + size <= CACHELINE_SIZE) endOffset = CACHELINE_SIZE;
+    if (OFFSET_CACHELINE(addr + size) == 0) endOffset = CACHELINE_SIZE;
     if (startOffset > endOffset) {
         VG_(emit("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)", addr, addr + size, startOffset, endOffset));
         //return;
@@ -766,28 +808,31 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
     
     struct pmat_cache_entry entry;
     entry.addr = TRIM_CACHELINE(addr);
-    // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
     // If the cache line has not been written back, write it into that cache-line.
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
     if (exists) {
-        VG_(emit)("Updating cache-line for %d\n", TRIM_CACHELINE(addr));
         VG_(memcpy)(exists->data + startOffset, &value, size);
+        ExeContext **context = VG_(OSetGen_AllocNode)(exists->pending, (SizeT) sizeof(ExeContext*)); 
+        context[0] = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
+        if (!VG_(OSetGen_Contains)(exists->pending, context)) VG_(OSetGen_Insert)(exists->pending, context);
         // Set bits being written to as dirty...
         exists->dirtyBits |= ((1 << size) - 1) << startOffset;
         return;
     } else {
-        VG_(emit)("Creating cache-line for %d\n", TRIM_CACHELINE(addr));
         // Create a new entry...
         struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
             (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+        entry->pending = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "pmc.main.istore.0", VG_(free));
+        ExeContext **context = VG_(OSetGen_AllocNode)(entry->pending, (SizeT) sizeof(ExeContext*)); 
+        context[0] = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
+        VG_(OSetGen_Insert)(entry->pending, context);
         entry->addr = TRIM_CACHELINE(addr);
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
         entry->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
 
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
-        VG_(emit)("Checking if we need to evict...\n");
         // Check if we need to evict...
         if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > NUM_CACHE_ENTRIES) {
             XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
@@ -1143,25 +1188,16 @@ do_fence(void)
         }
     }
     Word nEntries = VG_(sizeXA)(arr);
-    VG_(emit)("Fencing %u entries for tid %lu\n", nEntries, tid);
+    //VG_(emit)("Fencing %u entries for tid %lu\n", nEntries, tid);
     for (int i = 0; i < nEntries; i++) {
         wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
         write_to_file(wbentry);
+        VG_(OSetGen_Destroy)(wbentry->entry->pending);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
     }
     maybe_simulate_crash();
-}
-
-static void
-performFlush(UWord base, UWord size) {
-    VG_(emit)("AFTER FLUSH: 0x%lx; 0x%lx", base, size);
-}
-
-static void
-beforeFlush() {
-    VG_(emit)("Called before flush!");
 }
 
 
@@ -1181,17 +1217,18 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         }
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
-    VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
+    //VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
     
     // See if this entry already exists
     struct pmat_write_buffer_entry wblookup;
     wblookup.entry = entry;
     struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
     if (exist) {
-        VG_(emit)("Flushing older entry for address %lx\n", exist->entry->addr);
+        //VG_(emit)("Flushing older entry for address %lx\n", exist->entry->addr);
         // Flush the original entry first...
         int sz = 1;
         write_to_file(exist);
+        VG_(OSetGen_Destroy)(exist->entry->pending);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
@@ -1216,6 +1253,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
             wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
             int sz = 1;
             write_to_file(wbentry);
+            VG_(OSetGen_Destroy)(wbentry->entry->pending);
             VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
             VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
@@ -1240,7 +1278,6 @@ do_flush(UWord base, UWord size)
     struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
             (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
     entry->addr = TRIM_CACHELINE(base);
-    // entry->context = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
     
     // If the cache line has not been written back, write it into that cache-line.
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
@@ -1750,8 +1787,6 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             Addr addr = arg[2];
             UWord size = arg[3];
             tl_assert(_name && "First argument 'name' must _not_ be NULL!");
-            VG_(emit)("Received VG_USERREQ__PMC_PMAT_REGISTER('%s', 0x%lx, 0x%lx)\n", _name, addr, size);
-
             
             // Create copy of 'name' in case user passes in non-constant heap-allocated data
             HChar *name = VG_(malloc)("File Name Copy", VG_(strlen)(_name));
@@ -1771,7 +1806,6 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
-            VG_(emit)("Registered '%s' to fd #%d\n", file->name, file->descr);
             break;
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {
