@@ -65,8 +65,6 @@ typedef
        VG_USERREQ__PMC_RESERVED5,  /* Do not use. */
        VG_USERREQ__PMC_RESERVED7,  /* Do not use. */
        VG_USERREQ__PMC_RESERVED8,  /* Do not use. */
-       VG_USERREQ__PMC_RESERVED9,  /* Do not use. */
-       VG_USERREQ__PMC_RESERVED10, /* Do not use. */
        VG_USERREQ__PMC_SET_CLEAN,
        /* transaction support */
        VG_USERREQ__PMC_START_TX,
@@ -82,18 +80,13 @@ typedef
        VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE,
        VG_USERREQ__PMC_RESERVED6,  /* Do not use. */
        VG_USERREQ__PMC_EMIT_LOG,
-       VG_USERREQ__PMC_VERIFICATION,
+       VG_USERREQ__PMC_PMAT_REGISTER,
+       VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH
    } Vg_PMemCheckClientRequest;
 
 
 
 /* Client-code macros to manipulate pmem mappings */
-
-/** Register a verification function to a particular mapping */
-#define VALGRIND_PMC_VERIFICATION(_qzz_addr, _qzz_fnptr) \
-    VALGRIND_DO_CLIENT_REQUEST_EXPR(0 /* default return */, \
-            VG_USERREQ__PMC_VERIFICATION, \
-            (_qzz_addr), (_qzz_fnptr), 0, 0, 0)
 
 /** Register a persistent memory mapping region */
 #define VALGRIND_PMC_REGISTER_PMEM_MAPPING(_qzz_addr, _qzz_len)             \
@@ -218,5 +211,15 @@ typedef
 #define VALGRIND_PMC_ADD_TO_GLOBAL_TX_IGNORE(_qzz_addr,_qzz_len)            \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE,\
                                     (_qzz_addr), (_qzz_len), 0, 0, 0)
+
+/** Forces a simulated crash and starts recovery */
+#define VALGRIND_PMC_FORCE_CRASH() \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,  \
+                                    0, 0, 0, 0, 0)
+
+/** Register a verification function to a particular mapping */
+#define VALGRIND_PMC_REGISTER(_qzz_name, _qzz_addr, _qzz_size) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT( VG_USERREQ__PMC_PMAT_REGISTER, \
+            (_qzz_name), (_qzz_addr), (_qzz_size), 0, 0)
 
 #endif

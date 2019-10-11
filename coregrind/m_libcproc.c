@@ -843,6 +843,41 @@ Int VG_(ptrace) ( Int request, Int pid, void *addr, void *data )
    Fork
    ------------------------------------------------------------------ */
 
+void VG_(ftruncate)(Int fd, UWord length) {
+   #if defined(VGO_linux)
+   SysRes res = VG_(do_syscall2)(__NR_ftruncate, fd, length);
+   if (sr_isError(res)) {
+      VG_(emit)("ftruncate failed with errno: %d\n", sr_Err(res));
+   }
+   #else
+   #error Unknown OS
+   #endif
+}
+
+Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset) {
+   #if defined(VGO_linux)
+   SysRes res = VG_(do_syscall6)(__NR_mmap, addr, length, prot, flags, fd, offset);
+   if (sr_isError(res)) {
+      VG_(emit)("mmap has errno: %d\n", sr_Err(res));
+      return NULL;
+   }
+   return sr_Res(res);
+#  else
+#    error Unknown OS 
+#  endif
+}
+
+Int VG_(munmap)(Addr addr, UWord length) {
+   #if defined(VGO_linux)
+   SysRes res = VG_(do_syscall2)(__NR_munmap, addr, length);
+   if (sr_isError(res))
+      return -1;
+   return sr_Res(res);
+   #else
+   #error Unknown OS
+   #endif
+}
+
 Int VG_(fork) ( void )
 {
 #  if defined(VGP_arm64_linux)

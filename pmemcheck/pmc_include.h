@@ -31,13 +31,17 @@ struct pmem_st {
 };
 
 struct pmat_cache_entry {
-   Addr addr;
-   char data[0];
+    // Bitmap to keep track of dirty bits
+    ExeContext *lastPendingStore;
+    Long dirtyBits;
+    Addr addr;
+    char data[0];
 };
 
 typedef int (*pmat_verification_fn)(void *, SizeT sz);
 
 struct pmat_registered_file {
+    char *name;
     UWord descr;
     Addr addr; 
     UWord size;
@@ -51,8 +55,8 @@ struct pmat_write_buffer_entry {
 
 // Converts addr to cache line addr
 #define CACHELINE_SIZE 64
-#define TRIM_CACHELINE(addr) (addr &~ (CACHELINE_SIZE - 1))
-#define OFFSET_CACHELINE(addr) (addr % CACHELINE_SIZE)
+#define TRIM_CACHELINE(addr) ((addr) &~ (CACHELINE_SIZE - 1))
+#define OFFSET_CACHELINE(addr) ((addr) % CACHELINE_SIZE)
 #define NUM_CACHE_ENTRIES 1024
 #define NUM_WB_ENTRIES 64
 
