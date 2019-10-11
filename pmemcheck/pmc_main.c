@@ -170,6 +170,8 @@ typedef struct {
 /** Number of sblock run. */
 static ULong sblocks = 0;
 
+static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
+
 /**
 * \brief Check if a given store overlaps with registered persistent memory
 *        regions.
@@ -330,16 +332,50 @@ print_store_stats(void)
     VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
             (pmem.pmat_cache_entries));
     VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+
+    // To prevent having to print out ExeContext for cache lines with the same stack
+    // trace, we instead create mappings from stack traces to cache lines.
+    XArray *arr = VG_(newXA)(VG_(malloc), "CacheLine Coalescing", VG_(free), (SizeT) sizeof(ExeContext *));
+    VG_(setCmpFnXA)(arr, (XACmpFn_t) cmp_exe_context);
+    VG_(sortXA)(arr);
     struct pmat_cache_entry *entry;
     while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
         struct pmat_registered_file file;
         file.addr = entry->addr;
         struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        if (!realFile) {
+            VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
+            VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+            struct pmat_registered_file *tmp;
+            while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+                VG_(emit)("File Found: (%lx, 0x%lx, 0x%lx)\n", tmp->descr, tmp->addr, tmp->size);
+            }
+        }
         tl_assert(realFile);
         VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
         VG_(pp_ExeContext)(entry->lastPendingStore);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        
+        XArray *nestedArr = VG_(lookupXA)(arr, entry->lastPendingStore, NULL, NULL);
+        if (!nestedArr) {
+            nestedArr = VG_(newXA)(VG_(malloc), "Nested Array for Coalescing", VG_(free), (SizeT) sizeof(Addr));
+            VG_(addToXA)(arr, &nestedArr);
+            VG_(sortXA)(arr);
+        }
+        VG_(addToXA)(nestedArr, &entry->addr);            
+    }
+
+    UWord size = VG_(sizeXA)(arr);
+    for (int i = 0; i < size; i++) {
+        XArray *nestedArr = VG_(indexXA)(arr, i);
+        UWord size2 = VG_(sizeXA)(nestedArr);
+        HChar str[1024] = {0};
+        for (int j = 0; j < size2; j++) {
+            Addr addr = VG_(indexXA)(nestedArr, j);
+            VG_(sprintf)(str, "0x%lx,", addr);
+        }
+        VG_(umsg)("Addresses '%s' coalesced...", str);
     }
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
