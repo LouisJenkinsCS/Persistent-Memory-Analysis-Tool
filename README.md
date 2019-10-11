@@ -2,7 +2,7 @@ Valgrind: an enhanced version for pmem
 ======================================
 
 
-[![Build Status](https://travis-ci.org/LouisJenkinsCS/valgrind.svg?branch=pmem-3.14)](https://travis-ci.org/louisjenkinscs/valgrind)
+[![Build Status](https://travis-ci.com/LouisJenkinsCS/valgrind.svg?branch=pmem-3.14)](https://travis-ci.com/louisjenkinscs/valgrind)
 
 This is the top-level README.md the enhanced version on Valgrind.
 This version has support for the new CLFLUSHOPT and CLWB instructions.
