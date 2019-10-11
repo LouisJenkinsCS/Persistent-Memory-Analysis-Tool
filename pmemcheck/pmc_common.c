@@ -53,13 +53,13 @@ cmp_pmat_registered_files1(const void *key, const void *elem)
 {
     const struct pmat_registered_file *lhs = (const struct pmat_registered_file *) (key);    
     const struct pmat_registered_file *rhs = (const struct pmat_registered_file *) (elem);
-
-    if (rhs->addr < lhs->addr)
+    
+    if (lhs->addr + lhs->size <= rhs->addr)
         return -1;
-    else if (lhs->addr < rhs->addr) 
+    else if (lhs->addr >= rhs->addr + rhs->size)
         return 1;
     else
-        return 0; // laddr + size >= raddr && laddr <= raddr + rsize
+        return 0;
 }
 
 /**

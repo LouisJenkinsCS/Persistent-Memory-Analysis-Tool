@@ -171,6 +171,35 @@ typedef struct {
 static ULong sblocks = 0;
 
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
+static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
+static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+// Comparator for finding a file associated with an address
+static Bool find_file_by_addr(const struct pmat_registered_file *lhs, const struct pmat_registered_file *rhs) {
+    if (rhs->size == 0) {
+        // LHS should have a non-zero size...
+        tl_assert2(lhs->size, "LHS(addr:0x%lx) has size of 0...", lhs->addr);
+        if (rhs->addr < lhs->addr) {
+            return -1;
+        } else if (rhs->addr > lhs->addr + lhs->size) {
+            return 1;
+        } else {
+            return 0;
+        }
+    } else if (lhs->size == 0) {
+        if (lhs->addr < rhs->addr) {
+            return 1;
+        } else if (lhs->addr > rhs->addr + rhs->size) {
+            return -1;
+        } else {
+            return 0;
+        }
+    } else {
+        // Neither lhs nor rhs has size of 0, meaning it is not finding a file... 
+        // Wrong comparator?
+        tl_assert2(0, "LHS(addr:0x%lx, size:0x%lx) and RHS(addr:0x%lx, size:0x%lx) have non-zero sizes...", lhs->addr, lhs->size, rhs->addr, rhs->size);
+    }
+}
 
 /**
 * \brief Check if a given store overlaps with registered persistent memory
@@ -182,9 +211,9 @@ static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool
 is_pmem_access(Addr addr, SizeT size)
 {
-    struct pmat_registered_file file;
+    struct pmat_registered_file file = {0};
     file.addr = TRIM_CACHELINE(addr);
-    return VG_(OSetGen_Contains)(pmem.pmat_registered_files, &file);
+    return !!VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
 }
 
 static void do_writeback(struct pmat_cache_entry *entry);
@@ -280,9 +309,9 @@ print_multiple_stores(void)
 
 static void write_to_file(struct pmat_write_buffer_entry *entry) {
     // Find the file associated with it...
-    struct pmat_registered_file file;
+    struct pmat_registered_file file = {0};
     file.addr = entry->entry->addr; 
-    struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+    struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
     
     // TODO: May want to move this behind some compile-time preprocessor directive
     // Check to see if file exists...
@@ -335,14 +364,16 @@ print_store_stats(void)
 
     // To prevent having to print out ExeContext for cache lines with the same stack
     // trace, we instead create mappings from stack traces to cache lines.
-    XArray *arr = VG_(newXA)(VG_(malloc), "CacheLine Coalescing", VG_(free), (SizeT) sizeof(ExeContext *));
-    VG_(setCmpFnXA)(arr, (XACmpFn_t) cmp_exe_context);
-    VG_(sortXA)(arr);
+    OSet *unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
     struct pmat_cache_entry *entry;
     while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
-        struct pmat_registered_file file;
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &entry->lastPendingStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
+        *node = entry->lastPendingStore;
+        VG_(OSetGen_Insert)(unique_cache_lines, node);
+        struct pmat_registered_file file = {0};
         file.addr = entry->addr;
-        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
         if (!realFile) {
             VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
             VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
@@ -352,40 +383,22 @@ print_store_stats(void)
             }
         }
         tl_assert(realFile);
-        VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
+        VG_(umsg)("['%s']\n", realFile->name);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
         VG_(pp_ExeContext)(entry->lastPendingStore);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
-        
-        XArray *nestedArr = VG_(lookupXA)(arr, entry->lastPendingStore, NULL, NULL);
-        if (!nestedArr) {
-            nestedArr = VG_(newXA)(VG_(malloc), "Nested Array for Coalescing", VG_(free), (SizeT) sizeof(Addr));
-            VG_(addToXA)(arr, &nestedArr);
-            VG_(sortXA)(arr);
-        }
-        VG_(addToXA)(nestedArr, &entry->addr);            
     }
 
-    UWord size = VG_(sizeXA)(arr);
-    for (int i = 0; i < size; i++) {
-        XArray *nestedArr = VG_(indexXA)(arr, i);
-        UWord size2 = VG_(sizeXA)(nestedArr);
-        HChar str[1024] = {0};
-        for (int j = 0; j < size2; j++) {
-            Addr addr = VG_(indexXA)(nestedArr, j);
-            VG_(sprintf)(str, "0x%lx,", addr);
-        }
-        VG_(umsg)("Addresses '%s' coalesced...", str);
-    }
+    VG_(OSetGen_Destroy)(unique_cache_lines);
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
     VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
     struct pmat_write_buffer_entry *wbentry = NULL;
     while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
         struct pmat_cache_entry *entry = wbentry->entry;
-        struct pmat_registered_file file;
+        struct pmat_registered_file file = {0};
         file.addr = entry->addr;
-        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
         tl_assert(realFile);
         VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
@@ -520,6 +533,53 @@ is_ip_memset_memcpy(Addr ip)
     return present;
 }
 
+static Bool
+cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs) {
+    if (lhs == NULL || rhs == NULL)
+        return False;
+    
+    if (lhs == rhs) {
+        VG_(emit)("LHS == RHS\n");
+        return True;
+    }
+
+    /* retrieve stacktraces */
+    UInt n_ips1;
+    UInt n_ips2;
+    const Addr *ips1 = VG_(make_StackTrace_from_ExeContext)(lhs, &n_ips1);
+    const Addr *ips2 = VG_(make_StackTrace_from_ExeContext)(rhs, &n_ips2);
+    DiEpoch lhs_ep = VG_(get_ExeContext_epoch)(lhs);
+    DiEpoch rhs_ep = VG_(get_ExeContext_epoch)(rhs);
+
+    // Different stacktrace depths?
+    if (n_ips1 != n_ips2) {
+        VG_(emit)("n_ips1(%d) != n_ips2(%d)\n", n_ips1, n_ips2);
+        return False;
+    }
+
+    // Compare file_name:line_number...
+    for (int i = 0; i < n_ips1; i++) {
+        HChar lhs_file_name[1024];
+        HChar lhs_dir_name[1024];
+        UInt lhs_line_number;
+        HChar *file_name;
+        HChar *dir_name;
+        UInt line_num;
+        VG_(get_filename_linenum)(lhs_ep, ips1[i], &file_name, &dir_name, &line_num);
+        VG_(strcpy)(lhs_file_name, file_name);
+        VG_(strcpy)(lhs_dir_name, dir_name);
+        lhs_line_number = line_num;
+        VG_(get_filename_linenum)(rhs_ep, ips2[i], &file_name, &dir_name, &line_num);
+        if (VG_(strcasecmp)(lhs_file_name, file_name) != 0 || VG_(strcasecmp)(lhs_dir_name, dir_name) != 0 || lhs_line_number != line_num) {
+            VG_(emit)("Different: (%s:%d) != (%s:%d)", lhs_file_name, lhs_line_number, file_name, line_num);
+            return False;
+        }
+    }
+
+    // Identical traces...
+    return True;
+}
+
 /**
  * \brief Compare two ExeContexts.
  * Checks if two ExeContext are equal not counting the possible first
@@ -566,6 +626,7 @@ cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs)
     return True;
 }
 
+static Int
 cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs) {
     tl_assert(lhs && *lhs && rhs && *rhs);
 
@@ -1235,9 +1296,9 @@ do_fence(void)
 static void do_writeback(struct pmat_cache_entry *entry) {
     VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
     ThreadId tid = VG_(get_running_tid)();
-    struct pmat_registered_file file;
+    struct pmat_registered_file file = {0};
     file.addr = entry->addr; 
-    struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+    struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
     // TODO: May want to move this behind some compile-time preprocessor directive
     if (!realFile) {
         VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
