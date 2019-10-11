@@ -340,19 +340,28 @@ print_store_stats(void)
         ExeContext **context;
         VG_(OSetGen_ResetIter)(entry->pending);
         while ((context = VG_(OSetGen_Next)(entry->pending))) {
+            VG_(umsg)("~~~~~~~~~~~~~~~\n");
             VG_(pp_ExeContext)(*context);
+            VG_(umsg)("~~~~~~~~~~~~~~~\n");
         }
     }
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
-    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
-    entry = NULL;
-    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
-        VG_(umsg)("Leaked Store to 0x%lx\n", entry->addr);
+    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    struct pmat_write_buffer_entry *wbentry = NULL;
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+        struct pmat_cache_entry *entry = wbentry->entry;
+        struct pmat_registered_file file;
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
+        tl_assert(realFile);
+        VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
         ExeContext **context;
         VG_(OSetGen_ResetIter)(entry->pending);
         while ((context = VG_(OSetGen_Next)(entry->pending))) {
+            VG_(umsg)("~~~~~~~~~~~~~~~\n");
             VG_(pp_ExeContext)(*context);
+            VG_(umsg)("~~~~~~~~~~~~~~~\n");
         }
     }
 }
