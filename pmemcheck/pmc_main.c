@@ -337,13 +337,9 @@ print_store_stats(void)
         struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
         tl_assert(realFile);
         VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
-        ExeContext **context;
-        VG_(OSetGen_ResetIter)(entry->pending);
-        while ((context = VG_(OSetGen_Next)(entry->pending))) {
-            VG_(umsg)("~~~~~~~~~~~~~~~\n");
-            VG_(pp_ExeContext)(*context);
-            VG_(umsg)("~~~~~~~~~~~~~~~\n");
-        }
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        VG_(pp_ExeContext)(entry->lastPendingStore);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
     }
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
@@ -356,13 +352,9 @@ print_store_stats(void)
         struct pmat_registered_file *realFile = VG_(OSetGen_Lookup)(pmem.pmat_registered_files, &file);
         tl_assert(realFile);
         VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
-        ExeContext **context;
-        VG_(OSetGen_ResetIter)(entry->pending);
-        while ((context = VG_(OSetGen_Next)(entry->pending))) {
-            VG_(umsg)("~~~~~~~~~~~~~~~\n");
-            VG_(pp_ExeContext)(*context);
-            VG_(umsg)("~~~~~~~~~~~~~~~\n");
-        }
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        VG_(pp_ExeContext)(entry->lastPendingStore);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
     }
 }
 
@@ -822,9 +814,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
     struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
     if (exists) {
         VG_(memcpy)(exists->data + startOffset, &value, size);
-        ExeContext **context = VG_(OSetGen_AllocNode)(exists->pending, (SizeT) sizeof(ExeContext*)); 
-        context[0] = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
-        if (!VG_(OSetGen_Contains)(exists->pending, context)) VG_(OSetGen_Insert)(exists->pending, context);
+        exists->lastPendingStore = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
         // Set bits being written to as dirty...
         exists->dirtyBits |= ((1 << size) - 1) << startOffset;
         return;
@@ -832,10 +822,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         // Create a new entry...
         struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
             (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
-        entry->pending = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "pmc.main.istore.0", VG_(free));
-        ExeContext **context = VG_(OSetGen_AllocNode)(entry->pending, (SizeT) sizeof(ExeContext*)); 
-        context[0] = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
-        VG_(OSetGen_Insert)(entry->pending, context);
+        entry->lastPendingStore = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
         entry->addr = TRIM_CACHELINE(addr);
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
@@ -1201,7 +1188,6 @@ do_fence(void)
     for (int i = 0; i < nEntries; i++) {
         wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
         write_to_file(wbentry);
-        VG_(OSetGen_Destroy)(wbentry->entry->pending);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
@@ -1237,7 +1223,6 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         // Flush the original entry first...
         int sz = 1;
         write_to_file(exist);
-        VG_(OSetGen_Destroy)(exist->entry->pending);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
@@ -1262,7 +1247,6 @@ static void do_writeback(struct pmat_cache_entry *entry) {
             wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
             int sz = 1;
             write_to_file(wbentry);
-            VG_(OSetGen_Destroy)(wbentry->entry->pending);
             VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
             VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);

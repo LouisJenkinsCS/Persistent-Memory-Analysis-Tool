@@ -8,7 +8,7 @@
 #include <libpmem.h>
 #include <valgrind/pmemcheck.h>
 
-#define N (1024)
+#define N (128)
 #define SIZE (N * sizeof(int))
 
 int main(int argc, char *argv[]) {
