@@ -57,6 +57,10 @@
     * A `store` at `program:L126` with did not persist (show value written)
     * A `flush` at `program:L127` was did not reach a `fence` and was not written-back (show flush and store info)
     * Show time may be helpful, as it can identify how long this leak has occurred (microseconds, that's okay... minutes? Thats bad!)
+* At program exit...
+  * Print out all leaked cache lines, as well as leaked stores
+  * Cache and write-buffer entries will store only their last pending `ExeContext`
+  * Coalescing of multiple cache-entries _needed_ to prevent having a ton of duplicate information.
 
 ## Intermediate Steps
 
