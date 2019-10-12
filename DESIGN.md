@@ -44,7 +44,8 @@
   * Child will poll on pipe for data, and while not busy, will check results of verification
   * Further requests for verification are queued up for later
 * Saving all files provides option to attempt 'recovery' from each individual file, to further test verification.
-
+  * IDEA: Experiment with `cp --reflink=auto` to implement a Copy-on-Write scheme
+  
 ## Debug Information
 
 * When a verification process fails, we do the following...
@@ -69,3 +70,4 @@
     * Child will `fork` to create grandchild verification process and will monitor it
     * Child still has access to write-buffer and cache and so can handle reporting errors
   * Parent has to handle creating copy of 'file' and updating it, but is more natural and intuitive
+  
