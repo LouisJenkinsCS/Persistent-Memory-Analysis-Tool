@@ -767,7 +767,7 @@ static void simulate_crash(void) {
 
 static void maybe_simulate_crash(void) {
     if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
-    if ((VG_(random)(NULL) % 1000) < 5) {
+    if ((VG_(random)(NULL) % 100) == 0) {
         simulate_crash();
     }
 }
@@ -961,7 +961,6 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
 {
     // Check if this is a store to registered memory
     if (LIKELY(!is_pmem_access(addr, size))) {
-        maybe_simulate_crash();
         return;
     }
         
