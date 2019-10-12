@@ -1,5 +1,6 @@
 /*
-    Simple test to see if we can catch errors at end of program...
+    Test to determine whether or not we can catch errors where stores are
+    written-back out-of-order due to a lack of an explicit fence.
 */
 
 #include <stdio.h>
@@ -20,13 +21,13 @@ int main(int argc, char *argv[]) {
 	int *arr = malloc(SIZE);
 	VALGRIND_PMC_REGISTER("dummy.bin", arr, SIZE);
 
-	// Parallel Zero-Initialize over 'persistent' memory...
-	#pragma omp parallel for
+    // Initialize array sequentially...
 	for (int i = 0; i < N; i++) {
 		arr[i] = i;
-		if (i % 8 == 0) asm volatile("clflush %0" : "+m" (*(volatile char *)(arr + i)));
+		asm volatile ("clflush (%0)" :: "r"(arr + i));
+        asm volatile("sfence" : : : "memory");
+        VALGRIND_PMC_FORCE_CRASH();
 	}
-	asm volatile("sfence" : : : "memory");
 
 	return 0;
 }

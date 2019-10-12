@@ -1381,6 +1381,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
     //VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
     
     // See if this entry already exists
+    // TODO: May need to merge pmat_write_buffer_entries!
     struct pmat_write_buffer_entry wblookup;
     wblookup.entry = entry;
     struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
@@ -1404,7 +1405,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
         struct pmat_write_buffer_entry *entry;
         while ( (entry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
-            if (VG_(random)(NULL) % 2) {
+            if (VG_(random)(NULL) % 10) {
                 VG_(addToXA)(arr, &entry); 
             }
         }
