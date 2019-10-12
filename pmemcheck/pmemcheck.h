@@ -85,6 +85,12 @@ typedef
    } Vg_PMemCheckClientRequest;
 
 
+/* 
+    Return value that should be used to signify a failure; differentiates
+    an unexpected error and an assertion that the file is bad (I.E segmentation
+    fault due to verification function or if it fails an assertion) 
+*/
+#define PMAT_VERIFICATION_FAILURE (0xBD)
 
 /* Client-code macros to manipulate pmem mappings */
 
