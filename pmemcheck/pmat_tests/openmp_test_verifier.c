@@ -1,5 +1,11 @@
 /*
     Simple test to see if we can catch errors at end of program...
+    
+    Note: Only the OpenMP thread that has index `i` mod 8 will
+    initiate a `clflush`, which means that there is a possiblity
+    that indices that are _not_ modulo 8 _may_ have holes where
+    their values are 0 due to another thread not writing not writing
+    in time for the flush; verification tool should check for this pattern!
 */
 
 #include <stdio.h>
