@@ -1405,7 +1405,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
         struct pmat_write_buffer_entry *entry;
         while ( (entry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
-            if (VG_(random)(NULL) % 10) {
+            if (VG_(random)(NULL) % 10 == 0) {
                 VG_(addToXA)(arr, &entry); 
             }
         }
