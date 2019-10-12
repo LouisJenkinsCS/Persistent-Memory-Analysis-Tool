@@ -45,6 +45,8 @@
   * Further requests for verification are queued up for later
 * Saving all files provides option to attempt 'recovery' from each individual file, to further test verification.
   * IDEA: Experiment with `cp --reflink=auto` to implement a Copy-on-Write scheme
+* Verification should be called based on a combination of the time since last verification and random chance...
+  * Static random chance happens far too often
   
 ## Debug Information
 
