@@ -337,16 +337,20 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
     }
     VG_(munmap)(addr, realFile->size);
     */
-    VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_CUR);
-    char cacheline[CACHELINE_SIZE];
+    Off64T offset = VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_SET);
+    tl_assert(offset == entry->entry->addr - realFile->addr);
+    UChar cacheline[CACHELINE_SIZE];
     VG_(read)(realFile->descr, cacheline, CACHELINE_SIZE);
-    for (int i = 0; i < CACHELINE_SIZE; i++) {
-        if (entry->entry->dirtyBits & (1 << i)) {
+    for (unsigned int i = 0; i < CACHELINE_SIZE; i++) {
+        unsigned int bit = (entry->entry->dirtyBits & (1UL << i)) >> i;
+        if (bit == 1UL) {
             cacheline[i] = entry->entry->data[i];
         }
     }
-    VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_CUR);
-    VG_(write)(realFile->descr, cacheline, CACHELINE_SIZE);
+    offset = VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_SET);
+    tl_assert(offset == entry->entry->addr - realFile->addr);
+    Int retval = VG_(write)(realFile->descr, cacheline, CACHELINE_SIZE);
+    tl_assert2(retval == CACHELINE_SIZE, "Write could only writeback %d bytes of data!", retval);
 }
 
 /**
@@ -923,7 +927,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         entry->addr = TRIM_CACHELINE(addr);
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
-        entry->dirtyBits |= ((1 << (endOffset - startOffset)) - 1) << startOffset;
+        entry->dirtyBits |= ((1 << size) - 1) << startOffset;
 
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
         // Check if we need to evict...

@@ -35,7 +35,7 @@ struct pmat_cache_entry {
     ExeContext *lastPendingStore;
     Long dirtyBits;
     Addr addr;
-    char data[0];
+    UChar data[0];
 };
 
 typedef int (*pmat_verification_fn)(void *, SizeT sz);

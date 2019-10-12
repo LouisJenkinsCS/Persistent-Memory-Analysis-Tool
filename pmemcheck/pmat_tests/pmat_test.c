@@ -23,7 +23,7 @@ int main(int argc, char *argv[]) {
 	// Parallel Zero-Initialize over 'persistent' memory...
 	#pragma omp parallel for
 	for (int i = 0; i < N; i++) {
-		arr[i] = 0;
+		arr[i] = i;
 		if (i % 8 == 0) asm volatile("clflush %0" : "+m" (*(volatile char *)(arr + i)));
 	}
 	asm volatile("sfence" : : : "memory");
