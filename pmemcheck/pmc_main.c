@@ -702,8 +702,74 @@ merge_stores(struct pmem_st *to_merge,
 
 typedef void (*split_clb)(struct pmem_st *store,  OSet *set, Bool preallocated);
 
-static void maybe_simulate_crash(void) {
+static void copy_files(char *suffix) {
+    VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+    struct pmat_registered_file *tmp;
+    while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+        char file_name[1024];
+        VG_(snprintf)(file_name, 1024, "%s.%d.%s", tmp->name, pmem.pmat_num_verifications, suffix);
+        SysRes res = VG_(open)(file_name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        if (sr_isError(res)) {
+            VG_(emit)("Could not open file '%s'; errno: %d\n", file_name, sr_Err(res));
+            tl_assert(0);
+        }
+        int fd = sr_Res(res);
+        VG_(lseek)(tmp->descr, 0, VKI_SEEK_SET);
+        VG_(lseek)(fd, 0, VKI_SEEK_SET);
+        // TODO: Need to find a way to get `cp --reflink=auto` working, or at least
+        // do this in block sizes optimized for the file (obtained from `stat`).
+        for (int i = 0; i < tmp->size; i++) {
+            char c;
+            tl_assert(VG_(read)(tmp->descr, &c, 1) == 1);
+            tl_assert(VG_(write)(fd, &c, 1) == 1);
+        }
+    }
+}
 
+static void simulate_crash(void) {
+    // Make copy of tests first...
+    Int pid = VG_(fork)();
+    if (pid != 0) {
+        // Parent...
+        Int retval;
+        Int retpid = VG_(waitpid)(pid, &retval, 0);
+        tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
+
+        // Check if child exited normally...
+        if (VKI_WIFEXITED(retval)) {
+            Int status = VKI_WEXITSTATUS(retval);
+            if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
+                VG_(emit)("Failed verification!\n");
+                copy_files("bad");
+            } else if (status == 0) {
+                VG_(emit)("Verification successful!\n");
+                copy_files("good");
+            } else {
+                VG_(emit)("Verification returned retval %d!\n", status);
+                copy_files("bad");
+            }
+        } else if (VKI_WIFSIGNALED(retval)) {
+            VG_(emit)("Verification process killed by signal %d (was coredump: %d)!\n", VKI_WTERMSIG(retval), VKI_WCOREDUMP(retval));
+            copy_files("bad");
+        } else {
+            copy_files("weird");
+            tl_assert2(0, "Verification process terminated in very unusual way!");
+        }
+    } else {
+        // Child...
+        char *args[4] = {"verifier", "1", "dummy.bin", NULL};
+        if(VG_(execv)("verifier", args)) {
+            VG_(exit)(-1);
+        }
+    }
+    pmem.pmat_num_verifications += 1;
+}
+
+static void maybe_simulate_crash(void) {
+    if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
+    if ((VG_(random)(NULL) % 1000) < 5) {
+        simulate_crash();
+    }
 }
 
 /**
@@ -1903,7 +1969,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             break;
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {
-            // TODO: Actually handle this case!
+            simulate_crash();
             break;
         }
         case VG_USERREQ__PMC_REGISTER_PMEM_MAPPING: {

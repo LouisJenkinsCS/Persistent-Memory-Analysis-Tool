@@ -60,6 +60,34 @@ struct pmat_write_buffer_entry {
 #define NUM_CACHE_ENTRIES 1024
 #define NUM_WB_ENTRIES 64
 
+/*
+    sys/waitstatus.h constants for portability (only on Linux, of course...)
+*/
+#if defined(VGO_linux)
+#define VKI_WCOREFLAG 0x80
+
+/* If WIFEXITED(STATUS), the low-order 8 bits of the status.  */
+#define VKI_WEXITSTATUS(status) (((status) & 0xff00) >> 8)
+
+/* If WIFSIGNALED(STATUS), the terminating signal.  */
+#define VKI_WTERMSIG(status) ((status) & 0x7f)
+
+/* If WIFSTOPPED(STATUS), the signal that stopped the child.  */
+#define VKI_WSTOPSIG(status) VKI_WEXITSTATUS(status)
+
+/* Nonzero if STATUS indicates normal termination.  */
+#define VKI_WIFEXITED(status) (VKI_WTERMSIG(status) == 0)
+
+/* Nonzero if STATUS indicates termination by a signal.  */
+#define VKI_WIFSIGNALED(status) \
+  (((signed char) (((status) & 0x7f) + 1) >> 1) > 0)
+
+#define VKI_WCOREDUMP(status) ((status) & VKI_WCOREFLAG)
+
+#else
+#error Unknown OS
+#endif
+
 /*------------------------------------------------------------*/
 /*--- Common functions                                     ---*/
 /*------------------------------------------------------------*/
