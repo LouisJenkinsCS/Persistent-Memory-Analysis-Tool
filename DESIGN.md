@@ -1,8 +1,20 @@
 # Design of the Persistent Memory Analysis Tool (fork of pmemcheck)
 
+## Types of Bugs discoverable by PMAT
+
+* Out-Of-Order Stores to _different_ cache lines
+  * All stores to the same cache line is sequentially consistent
+    * That is, they get written into it immediately.
+  * Trade-off for using a granularity of cache lines
+    * PMDK's pmemcheck has granularity of individual stores
+    * Bookkeeping for individual stores requires far more time and space (linear)
+    * Bookkeeping for cache lines requires only a constant amount of time and space.
+  * Might be possible to use a hybrid approach for individual stores and cache lines
+    * Just place a set of store meta-data to an individual cache-line
+
 ## Replicating Client State via a Shadow Heap
 
-* Pointers declared to the Valgrind host as being 'persistent' get their own shadow heap
+* _Aligned_ pointers declared to the Valgrind host as being 'persistent' get their own shadow heap
   * Shadow heap represents a _file_ that is written to in a way that simulates the out-of-order nature of the CPU
   * Due to constructs such as `mmap` and `shm*` being unavailable in Valgrind, we use `lseek` and `write`
     * Valgrind builds without linking in standard libraries, likely for portability reasons
