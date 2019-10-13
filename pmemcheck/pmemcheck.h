@@ -83,7 +83,9 @@ typedef
        VG_USERREQ__PMC_RESERVED6,  /* Do not use. */
        VG_USERREQ__PMC_EMIT_LOG,
        VG_USERREQ__PMC_PMAT_REGISTER,
-       VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH
+       VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,
+       VG_USERREQ__PMC_PMAT_CRASH_DISABLE,
+       VG_USERREQ__PMC_PMAT_CRASH_ENABLE
    } Vg_PMemCheckClientRequest;
 
 
@@ -221,13 +223,24 @@ typedef
                                     (_qzz_addr), (_qzz_len), 0, 0, 0)
 
 /** Forces a simulated crash and starts recovery */
-#define VALGRIND_PMC_FORCE_CRASH() \
+#define PMAT_FORCE_CRASH() \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,  \
                                     0, 0, 0, 0, 0)
 
 /** Register a verification function to a particular mapping */
-#define VALGRIND_PMC_REGISTER(_qzz_name, _qzz_addr, _qzz_size) \
-    VALGRIND_DO_CLIENT_REQUEST_STMT( VG_USERREQ__PMC_PMAT_REGISTER, \
+#define PMAT_REGISTER(_qzz_name, _qzz_addr, _qzz_size) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_REGISTER, \
             (_qzz_name), (_qzz_addr), (_qzz_size), 0, 0)
+
+/** Disable simulated crashes */
+#define PMAT_CRASH_DISABLE() \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_CRASH_DISABLE, \
+            0, 0, 0, 0, 0)
+
+/** Enable simulated crashes */
+#define PMAT_CRASH_ENABLE() \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_CRASH_ENABLE, \
+            0, 0, 0, 0, 0)
+
 
 #endif

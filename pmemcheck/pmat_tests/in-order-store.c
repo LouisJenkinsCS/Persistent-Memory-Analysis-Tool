@@ -21,14 +21,13 @@ int main(int argc, char *argv[]) {
 	/* create a pmem file and memory map it */
 	int *arr;
 	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
-	VALGRIND_PMC_REGISTER("dummy.bin", arr, SIZE);
+	PMAT_REGISTER("dummy.bin", arr, SIZE);
 
     // Initialize array sequentially...
 	for (int i = 0; i < N; i++) {
 		arr[i] = i;
 		asm volatile ("clflush (%0)" :: "r"(arr + i));
-        asm volatile("sfence" : : : "memory");
-        VALGRIND_PMC_FORCE_CRASH();
+        PMAT_FORCE_CRASH();
 	}
 
 	return 0;

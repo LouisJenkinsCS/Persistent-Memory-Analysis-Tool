@@ -83,6 +83,9 @@ static struct pmem_ops {
     /** Number of verifications hat have been run so far. */
     Word pmat_num_verifications;
 
+    /** Whether or not we should verify */
+    Bool pmat_should_verify;
+
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
 
@@ -754,7 +757,7 @@ static void simulate_crash(void) {
 }
 
 static void maybe_simulate_crash(void) {
-    if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
+    if (!pmem.pmat_should_verify || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
     if ((VG_(random)(NULL) % 100) == 0) {
         simulate_crash();
     }
@@ -1904,6 +1907,8 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_REMOVE_THREAD_FROM_TX_N != arg[0]
             && VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE != arg[0]
             && VG_USERREQ__PMC_PMAT_REGISTER != arg[0]
+            && VG_USERREQ__PMC_PMAT_CRASH_ENABLE != arg[0]
+            && VG_USERREQ__PMC_PMAT_CRASH_DISABLE != arg[0]
             && VG_USERREQ__PMC_RESERVED1 != arg[0]
             && VG_USERREQ__PMC_RESERVED2 != arg[0]
             && VG_USERREQ__PMC_RESERVED3 != arg[0]
@@ -1916,6 +1921,14 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         return False;
 
     switch (arg[0]) {
+        case VG_USERREQ__PMC_PMAT_CRASH_ENABLE: {
+            pmem.pmat_should_verify = True;
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_CRASH_DISABLE: {
+            pmem.pmat_should_verify = False;
+            break;
+        }
         case VG_USERREQ__PMC_PMAT_REGISTER: {
             // TODO: Need to actually appropriately handle this under new model;
             // Should now only take an address; verification program should have
@@ -1944,7 +1957,6 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
-            VG_(emit)("Registered file '%s' for address 0x%lx!\n", file->name, file->addr);
             break;
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {
@@ -2157,8 +2169,11 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
-    pmem.pmat_cache_entries = VG_(OSetGen_Create)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free));
-    pmem.pmat_write_buffer_entries = VG_(OSetGen_Create)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free));
+    pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free), 
+            2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+    pmem.pmat_write_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free),
+            4 * NUM_WB_ENTRIES, (SizeT) sizeof(struct pmat_write_buffer_entry));
+    pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmc.main.cpci.-1", VG_(free));
     pmem.pmem_stores = VG_(OSetGen_Create)(/*keyOff*/0, cmp_pmem_st,
