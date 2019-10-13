@@ -80,11 +80,17 @@ static struct pmem_ops {
     /** Store buffer for to-be-written-back stores. */
     OSet *pmat_write_buffer_entries;
 
-    /** Number of verifications hat have been run so far. */
+    /** Number of verifications that have been run so far. */
     Word pmat_num_verifications;
+
+    /** Number of bad verification that have been run so far. */
+    Word pmat_num_bad_verifications;
 
     /** Whether or not we should verify */
     Bool pmat_should_verify;
+
+    /** Verification program */
+    HChar *pmat_verifier;
 
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
@@ -400,6 +406,8 @@ print_store_stats(void)
         VG_(pp_ExeContext)(entry->lastPendingStore);
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
     }
+
+    VG_(umsg)("%d out of %d verifications failed...\n", pmem.pmat_num_bad_verifications, pmem.pmat_num_verifications);
 }
 
 /**
@@ -718,6 +726,10 @@ static void copy_files(char *suffix) {
 }
 
 static void simulate_crash(void) {
+    if (!pmem.pmat_verifier) {
+        VG_(fmsg)("[Error] Attempt to force a crash without a verification function!");
+        return;
+    }
     // Make copy of tests first...
     Int pid = VG_(fork)();
     if (pid != 0) {
@@ -726,38 +738,50 @@ static void simulate_crash(void) {
         Int retpid = VG_(waitpid)(pid, &retval, 0);
         tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
 
+        pmem.pmat_num_verifications++;
         // Check if child exited normally...
         if (VKI_WIFEXITED(retval)) {
             Int status = VKI_WEXITSTATUS(retval);
             if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
-                VG_(emit)("Failed verification!\n");
+                pmem.pmat_num_bad_verifications++;
                 copy_files("bad");
             } else if (status == 0) {
-                VG_(emit)("Verification successful!\n");
                 copy_files("good");
             } else {
-                VG_(emit)("Verification returned retval %d!\n", status);
+                pmem.pmat_num_bad_verifications++;
                 copy_files("bad");
             }
         } else if (VKI_WIFSIGNALED(retval)) {
-            VG_(emit)("Verification process killed by signal %d (was coredump: %d)!\n", VKI_WTERMSIG(retval), VKI_WCOREDUMP(retval));
-            copy_files("bad");
+            pmem.pmat_num_bad_verifications++;
+            copy_files("bad.coredump");
         } else {
-            copy_files("weird");
+            pmem.pmat_num_bad_verifications++;
+            copy_files("bad.weird");
             tl_assert2(0, "Verification process terminated in very unusual way!");
         }
     } else {
         // Child...
-        char *args[4] = {"verifier", "1", "dummy.bin", NULL};
-        if(VG_(execv)("verifier", args)) {
+        int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);
+        char *args[numFiles + 3]; 
+        args[0] = pmem.pmat_verifier;
+        char numFilesStr[3];
+        VG_(snprintf)(numFilesStr, 3, "%d", numFiles);
+        args[1] = numFilesStr;
+        int n = 2;
+        VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+        struct pmat_registered_file *file;
+        while ((file = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+            args[n++] = file->name;
+        } 
+        args[n] = NULL;
+        if(VG_(execv)(pmem.pmat_verifier, args)) {
             VG_(exit)(-1);
         }
     }
-    pmem.pmat_num_verifications += 1;
 }
 
 static void maybe_simulate_crash(void) {
-    if (!pmem.pmat_should_verify || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
+    if (!pmem.pmat_should_verify || !pmem.pmat_verifier || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
     if ((VG_(random)(NULL) % 100) == 0) {
         simulate_crash();
     }
@@ -2142,7 +2166,8 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 static Bool
 pmc_process_cmd_line_option(const HChar *arg)
 {
-    if VG_BOOL_CLO(arg, "--mult-stores", pmem.track_multiple_stores) {}
+    if VG_STR_CLO(arg, "--pmat-verifier", pmem.pmat_verifier) {}
+    else if VG_BOOL_CLO(arg, "--mult-stores", pmem.track_multiple_stores) {}
     else if VG_BINT_CLO(arg, "--indiff", pmem.store_sb_indiff, 0, UINT_MAX) {}
     else if VG_BOOL_CLO(arg, "--log-stores", pmem.log_stores) {}
     else if VG_BOOL_CLO(arg, "--log-stores-stacktraces", pmem.store_traces) {}
@@ -2169,6 +2194,8 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
+    pmem.pmat_num_verifications = 0;
+    pmem.pmat_num_bad_verifications = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free), 
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_write_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free),
@@ -2231,7 +2258,8 @@ pmc_print_usage(void)
             "                                           default [yes]\n"
             "    --expect-fence-after-clflush=<yes|no>  simulate 2-phase flushing on old CPUs\n"
             "                                           default [no]\n"
-
+            "    --pmat-verifier=<path/to/exec>         verifier to call when simulating crash\n"
+            "                                           default [no verification]\n"
     );
 }
 
