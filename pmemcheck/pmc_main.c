@@ -727,7 +727,10 @@ static void copy_files(char *suffix) {
 
 static void simulate_crash(void) {
     if (!pmem.pmat_verifier) {
-        VG_(fmsg)("[Error] Attempt to force a crash without a verification function!");
+        VG_(fmsg)("[Error] Attempt to force a crash without a verification function!\n");
+        return;
+    } else if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) {
+        VG_(fmsg)("[Error] Attempt to force a crash without registering persistent region!\n");
         return;
     }
     // Make copy of tests first...
@@ -1396,18 +1399,20 @@ static void do_writeback(struct pmat_cache_entry *entry) {
     //VG_(emit)("Parent-Flush: (0x%lx, 0x%lx)\n", realFile->descr, entry->addr);
     
     // See if this entry already exists
-    // TODO: May need to merge pmat_write_buffer_entries!
     struct pmat_write_buffer_entry wblookup;
     wblookup.entry = entry;
     struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
     if (exist) {
-        //VG_(emit)("Flushing older entry for address %lx\n", exist->entry->addr);
-        // Flush the original entry first...
-        int sz = 1;
-        write_to_file(exist);
-        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
-        VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
-        VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
+        // Merge our cache line...
+        exist->entry->dirtyBits |= entry->dirtyBits;
+        for (ULong i = 0; i < CACHELINE_SIZE; i++) {
+            ULong bit = (entry->dirtyBits & (1ULL << i));
+            if (bit) {
+                exist->entry->data[i] = entry->data[i];
+            }
+        }
+        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
+        return;
     }
 
     // Store Buffer
@@ -1960,8 +1965,14 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             HChar *_name = arg[1];
             Addr addr = arg[2];
             UWord size = arg[3];
-            tl_assert2(_name, "First argument 'name' must _not_ be NULL!");
-            tl_assert2(TRIM_CACHELINE(addr) == addr, "Address 0x%lx is not aligned to cache line size of %d!", addr, CACHELINE_SIZE);
+            if (!_name) {
+                VG_(fmsg)("First argument 'name' must _not_ be NULL!\n");
+                return False;
+            }
+            if (TRIM_CACHELINE(addr) != addr) {
+                VG_(fmsg)("Address 0x%lx is not aligned to cache line size of %d!\n", addr, CACHELINE_SIZE);
+                return False;
+            }
             
             // Create copy of 'name' in case user passes in non-constant heap-allocated data
             HChar *name = VG_(malloc)("File Name Copy", VG_(strlen)(_name));
