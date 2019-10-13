@@ -10,10 +10,11 @@
 #include <valgrind/pmemcheck.h>
 #include <assert.h>
 
-#define N (64)
+#define N 1024
 #define SIZE (N * sizeof(int))
 
 int main(int argc, char *argv[]) {
+	PMAT_CRASH_DISABLE();
 	size_t mapped_len;
 	int is_pmem;
 	int check;
@@ -21,7 +22,7 @@ int main(int argc, char *argv[]) {
 	/* create a pmem file and memory map it */
 	int *arr;
 	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
-	PMAT_REGISTER("dummy.bin", arr, SIZE);
+	PMAT_REGISTER("in-order-store.bin", arr, SIZE);
 
     // Initialize array sequentially...
 	for (int i = 0; i < N; i++) {

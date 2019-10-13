@@ -9,23 +9,24 @@
 #include <libpmem.h>
 #include <valgrind/pmemcheck.h>
 
-#define N (64)
+#define N 1024
 #define SIZE (N * sizeof(int))
 
 int main(int argc, char *argv[]) {
+	PMAT_CRASH_DISABLE();
 	size_t mapped_len;
 	int is_pmem;
 	int check;
 
 	/* create a pmem file and memory map it */
 	int *arr = malloc(SIZE);
-	VALGRIND_PMC_REGISTER("dummy.bin", arr, SIZE);
+	PMAT_REGISTER("out-of-order-store.bin", arr, SIZE);
 
     // Initialize array sequentially...
 	for (int i = 0; i < N; i++) {
 		arr[i] = i;
-		asm volatile ("clflush (%0)" :: "r"(arr + i));
-        VALGRIND_PMC_FORCE_CRASH();
+		asm volatile ("clflushopt (%0)" :: "r"(arr + i));
+        PMAT_FORCE_CRASH();
 	}
 
 	return 0;
