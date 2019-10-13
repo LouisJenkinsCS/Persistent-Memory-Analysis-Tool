@@ -17,7 +17,8 @@ int main(int argc, char *argv[]) {
 	int check;
 
 	/* create a pmem file and memory map it */
-	int *arr = malloc(SIZE);
+	int *arr;
+	posix_memalign(&arr, PMAT_CACHELINE_SIZE, SIZE);
 	VALGRIND_PMC_REGISTER("dummy.bin", arr, SIZE);
 
 	// Parallel Zero-Initialize over 'persistent' memory...

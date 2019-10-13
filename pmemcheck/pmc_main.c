@@ -212,7 +212,7 @@ static Bool
 is_pmem_access(Addr addr, SizeT size)
 {
     struct pmat_registered_file file = {0};
-    file.addr = TRIM_CACHELINE(addr);
+    file.addr = addr;
     return !!VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
 }
 
@@ -324,26 +324,14 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
         }
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
-    /*
-    Addr addr = VG_(mmap)(NULL, realFile->size, VKI_PROT_WRITE | VKI_PROT_READ | VKI_PROT_EXEC, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
-    VG_(emit)("MMAP returned 0x%lx for file '%s'; 'mmap(0x%lx, 0x%lx, %lu, %lu, %lu, 0x%lx)'\n", addr, realFile->name, NULL, realFile->size, VKI_PROT_READ | VKI_PROT_WRITE, VKI_MAP_SHARED, realFile->descr, entry->entry->addr - realFile->addr);
-    tl_assert(addr);
-    // TODO: Vectorize?
-    for (int i = 0; i < CACHELINE_SIZE; i++) {
-        if (entry->entry->dirtyBits & (1 << i)) {
-            VG_(emit)("Writing to '%s' at addr 0x%lx", realFile->name, addr + i);
-            *(char *) (addr + i) = entry->entry->data[i];
-        }
-    }
-    VG_(munmap)(addr, realFile->size);
-    */
+
     Off64T offset = VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_SET);
     tl_assert(offset == entry->entry->addr - realFile->addr);
     UChar cacheline[CACHELINE_SIZE];
     VG_(read)(realFile->descr, cacheline, CACHELINE_SIZE);
-    for (unsigned int i = 0; i < CACHELINE_SIZE; i++) {
-        unsigned int bit = (entry->entry->dirtyBits & (1UL << i)) >> i;
-        if (bit == 1UL) {
+    for (ULong i = 0; i < CACHELINE_SIZE; i++) {
+        ULong bit = (entry->entry->dirtyBits & (1ULL << i));
+        if (bit) {
             cacheline[i] = entry->entry->data[i];
         }
     }
@@ -964,8 +952,8 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         return;
     }
         
-    Int startOffset = OFFSET_CACHELINE(addr);
-    Int endOffset = OFFSET_CACHELINE(addr + size);
+    ULong startOffset = OFFSET_CACHELINE(addr);
+    ULong endOffset = OFFSET_CACHELINE(addr + size);
     if (OFFSET_CACHELINE(addr + size) == 0) endOffset = CACHELINE_SIZE;
     if (startOffset > endOffset) {
         VG_(emit("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)", addr, addr + size, startOffset, endOffset));
@@ -982,7 +970,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         VG_(memcpy)(exists->data + startOffset, &value, size);
         exists->lastPendingStore = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
         // Set bits being written to as dirty...
-        exists->dirtyBits |= ((1 << size) - 1) << startOffset;
+        exists->dirtyBits |= ((1ULL << ((ULong) size)) - 1ULL) << startOffset;
         return;
     } else {
         // Create a new entry...
@@ -992,7 +980,7 @@ trace_pmem_store(Addr addr, SizeT size, UWord value)
         entry->addr = TRIM_CACHELINE(addr);
         VG_(memset)(entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(entry->data + OFFSET_CACHELINE(addr), &value, size);
-        entry->dirtyBits |= ((1 << size) - 1) << startOffset;
+        entry->dirtyBits |= ((1ULL << ((ULong) size)) - 1ULL) << startOffset;
 
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, entry);
         // Check if we need to evict...
@@ -1432,25 +1420,16 @@ static void do_writeback(struct pmat_cache_entry *entry) {
 * \param[in] size The size of the flush in bytes.
 */
 static void
-do_flush(UWord base, UWord size)
-    {
+do_flush(UWord base, UWord size) {
     // TODO: Need to handle multi-cacheline flushes!
-    struct pmat_cache_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
-            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
-    entry->addr = TRIM_CACHELINE(base);
+    struct pmat_cache_entry entry = {0};
+    entry.addr = TRIM_CACHELINE(base);
     
     // If the cache line has not been written back, write it into that cache-line.
-    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, entry);
+    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
     if (exists) {
-        /*for (Addr addr = exists->addr; addr < ((UWord) exists->addr) + CACHELINE_SIZE; addr += CACHELINE_SIZE / 8) {
-            VG_(emit)("|STORE;0x%lx;0x%lx;0x%lx", addr, *(UWord *) addr, 8);
-        }
-        VG_(emit)("|FLUSH;0x%lx,0x%llx", exists->addr, CACHELINE_SIZE);
-        VG_(emit)("|FENCE");
-        */
         do_writeback(exists);
     }
-    VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
 }
 
 /**
@@ -1753,21 +1732,19 @@ pmc_instrument(VgCallbackClosure *closure,
                 /* for now we are not interested in any of the above */
                 addStmtToIRSB(sbOut, st);
                 break;                
+
             case Ist_Flush: {
                 //add_simple_event(sbOut, beforeFlush, "beforeFlush");
                 addStmtToIRSB(sbOut, st);
-                if (LIKELY(pmem.automatic_isa_rec)) {
-                    IRExpr *addr = st->Ist.Flush.addr;
-                    IRType type = typeOfIRExpr(tyenv, addr);
-                    tl_assert(type != Ity_INVALID);
-                    add_flush_event(sbOut, st->Ist.Flush.addr);
-
-		    /* treat clflush as strong memory ordered */
-		    if (st->Ist.Flush.fk == Ifk_flush)
-                       if (!pmem.weak_clflush)
-                          add_simple_event(sbOut, do_fence, "do_fence");
-                }
-                break;
+                IRExpr *addr = st->Ist.Flush.addr;
+                IRType type = typeOfIRExpr(tyenv, addr);
+                tl_assert(type != Ity_INVALID);
+                add_flush_event(sbOut, st->Ist.Flush.addr);
+                
+                // CLFLUSH is strongly ordered, so add a fence immediately after
+                // Otherwise it is a CLWB or CLFLUSHOPT
+                if (st->Ist.Flush.fk == Ifk_flush)
+                    add_simple_event(sbOut, do_fence, "do_fence");
             }
 
             case Ist_MBE: {
@@ -1946,7 +1923,8 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             HChar *_name = arg[1];
             Addr addr = arg[2];
             UWord size = arg[3];
-            tl_assert(_name && "First argument 'name' must _not_ be NULL!");
+            tl_assert2(_name, "First argument 'name' must _not_ be NULL!");
+            tl_assert2(TRIM_CACHELINE(addr) == addr, "Address 0x%lx is not aligned to cache line size of %d!", addr, CACHELINE_SIZE);
             
             // Create copy of 'name' in case user passes in non-constant heap-allocated data
             HChar *name = VG_(malloc)("File Name Copy", VG_(strlen)(_name));
@@ -1966,6 +1944,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
+            VG_(emit)("Registered file '%s' for address 0x%lx!\n", file->name, file->addr);
             break;
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {

@@ -33,7 +33,7 @@ struct pmem_st {
 struct pmat_cache_entry {
     // Bitmap to keep track of dirty bits
     ExeContext *lastPendingStore;
-    Long dirtyBits;
+    ULong dirtyBits;
     Addr addr;
     UChar data[0];
 };
@@ -54,11 +54,11 @@ struct pmat_write_buffer_entry {
 };
 
 // Converts addr to cache line addr
-#define CACHELINE_SIZE 64
-#define TRIM_CACHELINE(addr) ((addr) &~ (CACHELINE_SIZE - 1))
+#define CACHELINE_SIZE 64ULL
+#define TRIM_CACHELINE(addr) ((addr) &~ (CACHELINE_SIZE - 1ULL))
 #define OFFSET_CACHELINE(addr) ((addr) % CACHELINE_SIZE)
-#define NUM_CACHE_ENTRIES 1024
-#define NUM_WB_ENTRIES 64
+#define NUM_CACHE_ENTRIES 1024ULL
+#define NUM_WB_ENTRIES 64ULL
 
 /*
     sys/waitstatus.h constants for portability (only on Linux, of course...)

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <libpmem.h>
 #include <valgrind/pmemcheck.h>
+#include <assert.h>
 
 #define N (64)
 #define SIZE (N * sizeof(int))
@@ -18,7 +19,8 @@ int main(int argc, char *argv[]) {
 	int check;
 
 	/* create a pmem file and memory map it */
-	int *arr = malloc(SIZE);
+	int *arr;
+	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
 	VALGRIND_PMC_REGISTER("dummy.bin", arr, SIZE);
 
     // Initialize array sequentially...

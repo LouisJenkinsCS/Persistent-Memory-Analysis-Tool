@@ -44,6 +44,8 @@
 
 #include "valgrind.h"
 
+#define PMAT_CACHELINE_SIZE 64
+
 /* !! ABIWARNING !! ABIWARNING !! ABIWARNING !! ABIWARNING !!
    This enum comprises an ABI exported by Valgrind to programs
    which use client requests.  DO NOT CHANGE THE ORDER OF THESE
