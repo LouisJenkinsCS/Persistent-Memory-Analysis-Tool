@@ -725,6 +725,19 @@ static void copy_files(char *suffix) {
     }
 }
 
+static void stringify_stack_trace_helper(UInt n, DiEpoch ep, Addr ip, void *strPtr) {
+    // TODO
+}
+
+static void stringify_stack_trace(ExeContext *context) {
+    UInt n_ips;
+    DiEpoch ep = VG_(get_ExeContext_epoch)(context);
+    Addr *ips = VG_(make_StackTrace_from_ExeContext)(context, &n_ips);
+
+    char *stackTraceStr;
+    VG_(apply_StackTrace)(stringify_stack_trace_helper, &stackTraceStr, ep, ips, n_ips);
+}
+
 static void simulate_crash(void) {
     if (!pmem.pmat_verifier) {
         VG_(fmsg)("[Error] Attempt to force a crash without a verification function!\n");
