@@ -8,3 +8,4 @@
 ### Tests
 
 1. Create [persistent non-blocking queue](https://dl.acm.org/citation.cfm?id=3178490) and test on that... 
+2. Create tests that use fixed address mappings between both application and verifier; need to be confident that this works.
