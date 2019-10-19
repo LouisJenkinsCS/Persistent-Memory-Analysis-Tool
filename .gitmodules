@@ -1,0 +1,3 @@
+[submodule "pmemcheck/pmat_tests/deps/libqsbr"]
+	path = pmemcheck/pmat_tests/deps/libqsbr
+	url = https://github.com/rmind/libqsbr.git
