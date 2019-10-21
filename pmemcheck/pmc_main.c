@@ -762,7 +762,7 @@ static void simulate_crash(void) {
                 pmem.pmat_num_bad_verifications++;
                 copy_files("bad");
             } else if (status == 0) {
-                copy_files("good");
+                // NOP: Might want to save '.good' files as an option later...
             } else {
                 pmem.pmat_num_bad_verifications++;
                 copy_files("bad");
@@ -1353,18 +1353,10 @@ add_event_dw(IRSB *sb, IRAtom *daddr, Int dsize, IRAtom *value)
     add_event_dw_guarded(sb, daddr, dsize, NULL, value);
 }
 
-/**
-* \brief Register a fence.
-*
-* Marks flushed stores as persistent.
-* The proper state transitions are DIRTY->FLUSHED->CLEAN.
-* The CLEAN state is not registered, the store is removed from the set.
-*/
+
 static void
-do_fence(void)
+_do_fence(void)
 {
-    // Perhaps simulate _before_ simulating the fence
-    maybe_simulate_crash();
     if (pmem.log_stores)
         VG_(emit)("|FENCE");
     
@@ -1389,9 +1381,22 @@ do_fence(void)
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
     }
-    maybe_simulate_crash();
 }
 
+/**
+* \brief Fence operation.
+*
+* Ensures that cache lines that have been flushed but not yet written back
+* are written back for the current thread. A point for crash simulation is
+* injected before and then after the fence operation.
+*/
+static void
+do_fence(void)
+{
+    maybe_simulate_crash();
+    _do_fence();
+    maybe_simulate_crash();
+}
 
 static void do_writeback(struct pmat_cache_entry *entry) {
     VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
@@ -1486,6 +1491,19 @@ trace_pmem_flush(Addr addr)
 {
     /* use native cache size for flush */
     do_flush(addr, pmem.flush_align_size);
+}
+
+/*
+    Handles CLFLUSH which is a flush+fence combination; this will ensure that
+    a simulation of a crash does not occur in between the flush and the fence,
+    eliminating any cases of false positives of 'leaked cache lines'. This will
+    call flush and fence in a way that no simulated crash occurs in between them.
+*/
+static VG_REGPARM(1) void
+trace_pmem_flush_fence(Addr addr) 
+{
+    do_flush(addr, pmem.flush_align_size);
+    do_fence();
     maybe_simulate_crash();
 }
 
@@ -1493,22 +1511,36 @@ trace_pmem_flush(Addr addr)
 * \brief Add an ordinary flush event.
 * \param[in,out] sb The IR superblock to which the expression belongs.
 * \param[in] daddr The expression with the address of the operation.
+* \param[in] isFence The flush is a CLFLUSH and hence needs to be treated as a fence as well
 */
 static void
-add_flush_event(IRSB *sb, IRAtom *daddr)
+add_flush_event(IRSB *sb, IRAtom *daddr, Bool isFence)
 {
     tl_assert(isIRAtom(daddr));
 
-    const HChar *helperName = "trace_pmem_flush";
-    void *helperAddr = trace_pmem_flush;
-    IRExpr **argv;
-    IRDirty *di;
+    if (!isFence) {
+        const HChar *helperName = "trace_pmem_flush";
+        void *helperAddr = trace_pmem_flush;
+        IRExpr **argv;
+        IRDirty *di;
 
-    argv = mkIRExprVec_1(daddr);
-    di = unsafeIRDirty_0_N(/*regparms*/1, helperName,
-            VG_(fnptr_to_fnentry)(helperAddr), argv);
+        argv = mkIRExprVec_1(daddr);
+        di = unsafeIRDirty_0_N(/*regparms*/1, helperName,
+                VG_(fnptr_to_fnentry)(helperAddr), argv);
 
-    addStmtToIRSB(sb, IRStmt_Dirty(di));
+        addStmtToIRSB(sb, IRStmt_Dirty(di));
+    } else {
+        const HChar *helperName = "trace_pmem_flush_fence";
+        void *helperAddr = trace_pmem_flush;
+        IRExpr **argv;
+        IRDirty *di;
+
+        argv = mkIRExprVec_1(daddr);
+        di = unsafeIRDirty_0_N(/*regparms*/1, helperName,
+                VG_(fnptr_to_fnentry)(helperAddr), argv);
+
+        addStmtToIRSB(sb, IRStmt_Dirty(di));
+    }
 }
 
 /**
@@ -1784,12 +1816,7 @@ pmc_instrument(VgCallbackClosure *closure,
                 IRExpr *addr = st->Ist.Flush.addr;
                 IRType type = typeOfIRExpr(tyenv, addr);
                 tl_assert(type != Ity_INVALID);
-                add_flush_event(sbOut, st->Ist.Flush.addr);
-                
-                // CLFLUSH is strongly ordered, so add a fence immediately after
-                // Otherwise it is a CLWB or CLFLUSHOPT
-                if (st->Ist.Flush.fk == Ifk_flush)
-                    add_simple_event(sbOut, do_fence, "do_fence");
+                add_flush_event(sbOut, st->Ist.Flush.addr, st->Ist.Flush.fk == Ifk_flush);
             }
 
             case Ist_MBE: {
@@ -2053,6 +2080,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 
         case VG_USERREQ__PMC_DO_FLUSH: {
             do_flush(arg[1], arg[2]);
+            maybe_simulate_crash();
             break;
         }
 
