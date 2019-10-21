@@ -10,4 +10,8 @@
 
 1. Create [persistent non-blocking queue](https://dl.acm.org/citation.cfm?id=3178490) and test on that... 
 2. Create tests that use fixed address mappings between both application and verifier; need to be confident that this works.
-3. Add Dependency directory for things like libqsbr
+3. ~~Add Dependency directory for things like libqsbr~~
+
+### Performance
+
+1. Use persistent queue to record time of operations (ns/op and total), compare to pmemcheck without verification
