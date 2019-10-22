@@ -10,7 +10,7 @@
 #include <valgrind/pmemcheck.h>
 #include <assert.h>
 #include "durable_queue.h"
-#include <gc.h>
+#include <qsbr/gc.h>
 
 #define N (64 * 1024)
 #define SIZE (sizeof(struct DurableQueue) + N * sizeof(struct DurableQueueNode))
@@ -24,7 +24,8 @@ int main(int argc, char *argv[]) {
 
     #pragma omp parallel for
 	for (int i = 0; i < N; i++) {
-		DurableQueue_enqueue(dq, i);
+		assert(DurableQueue_enqueue(dq, i) == true);
 	}
+	assert(DurableQueue_enqueue(dq, -1) == false);
 	return 0;
 }

@@ -1,32 +1,4 @@
-#pragma once
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdatomic.h>
-#include <gc.h>
-#define MAX_THREADS 4
-
-// For documentation purposes...
-// Refers to something being transient or persistent
-#define TRANSIENT
-#define PERSISTENT
-
-#define FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr));
-#define DQ_HEAP(dq) (dq->heap_base + dq->heap_offset)
-#define DQ_HEAP_ALLOC(dq, sz) (dq->heap_base + atomic_fetch_add(&dq->heap_offset, sz))
-
-PERSISTENT struct DurableQueueNode {
-    int value;
-    int deqThreadID;
-    atomic_uintptr_t next;
-    // When we are in recovery, we just make this value 'NULL' if not already...
-    TRANSIENT gc_entry_t *gc_next;
-};
-
-// Lock-Free Treiber Stack
-TRANSIENT struct FreeListNode {
-    void *addr;
-    atomic_uintptr_t next;
-};
+#include "durable_queue.h"
 
 // Allocate node; The node is made entirely persistent by the time this function returns...
 struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTENT {
@@ -40,23 +12,16 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
     return node;
 }
 
-PERSISTENT struct DurableQueue {
-    atomic_uintptr_t head;
-    atomic_uintptr_t tail;
-    // Persistent pointer to a persistent integer
-    int PERSISTENT *returnedValues[MAX_THREADS];
-    void *heap_base;
-    TRANSIENT gc_t *gc; // Garbage collector
-    TRANSIENT atomic_uintptr_t free_list;
-    atomic_uintptr_t alloc_list;
-};
-
 struct DurableQueueNode *DurableQueue_alloc(struct DurableQueue *dq) {
-
+    return NULL;
 }
 
 void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) {
-
+    uintptr_t head;
+    do {
+        head = dq->free_list;
+        node->free_list_next = head;
+    } while(!atomic_compare_exchange_weak(&dq->free_list, &head, (uintptr_t) node));
 }
 
 // Currently, this data structure expects an _entire_ region of "persistent" memory
@@ -96,17 +61,14 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
     if (dq->heap_base == NULL || dq->head == NULL || dq->tail == NULL) {
         return DurableQueue_create(heap, sz);
     }
-
-    
-    
 }
 
-int DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
+bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
     // Allocate node...
     struct DurableQueueNode *node = DurableQueue_alloc(dq);
     // Full... May need to dequeue for a bit...
     if (node == NULL) {
-        return 0;
+        return false;
     }
 
     while (1) {
@@ -117,7 +79,7 @@ int DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
                 if (atomic_compare_exchange_strong(&last->next, (uintptr_t *) &next, (uintptr_t) node)) {
                     FLUSH(&last->next);
                     atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) &last, (uintptr_t) node);
-                    return 1;
+                    return true;
                 }
             }
         } else {
