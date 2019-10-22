@@ -10,16 +10,17 @@
 #include <valgrind/pmemcheck.h>
 #include <assert.h>
 #include "durable_queue.h"
+#include <gc.h>
 
-#define N 64 * 1024
-#define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct Node))
+#define N (64 * 1024)
+#define SIZE (sizeof(struct DurableQueue) + N * sizeof(struct DurableQueueNode))
 
 
 int main(int argc, char *argv[]) {
 	void *heap;
 	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, SIZE) == 0);
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
-    struct DurableQueue *dq = DurableQueue_create(heap);
+    struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
 
     #pragma omp parallel for
 	for (int i = 0; i < N; i++) {
