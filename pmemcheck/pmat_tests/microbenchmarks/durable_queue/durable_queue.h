@@ -24,7 +24,7 @@ PERSISTENT struct DurableQueueNode {
     TRANSIENT atomic_uintptr_t free_list_next;
     TRANSIENT atomic_uintptr_t alloc_list_next;
     // When we are in recovery, we just make this value 'NULL' if not already...
-    TRANSIENT gc_entry_t *gc_next;
+    TRANSIENT gc_entry_t PERSISTENT *gc_next;
 };
 
 // Lock-Free Treiber Stack
@@ -64,3 +64,7 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT;
 struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT;
 
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT;
+
+void DurableQueue_register(struct DurableQueue *dq) TRANSIENT;
+
+void DurableQueue_unregister(struct DurableQueue *dq) TRANSIENT;

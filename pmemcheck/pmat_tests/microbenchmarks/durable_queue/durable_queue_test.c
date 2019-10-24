@@ -11,6 +11,7 @@
 #include <assert.h>
 #include "durable_queue.h"
 #include <qsbr/gc.h>
+#include <omp.h>
 
 // Size is N + 1 as we need space for the sentinel node
 #define N 1024
@@ -23,9 +24,13 @@ int main(int argc, char *argv[]) {
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
     struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
 
-    #pragma omp parallel for
-	for (int i = 0; i < N; i++) {
-		assert(DurableQueue_enqueue(dq, i) == true);
+    #pragma omp parallel 
+	{
+		DurableQueue_register(dq);
+		for (int i = 0; i < N / omp_get_num_threads(); i++) {
+			assert(DurableQueue_enqueue(dq, i) == true);
+		}
+		DurableQueue_unregister(dq);
 	}
 	assert(DurableQueue_enqueue(dq, -1) == false);
 	free(heap);
