@@ -42,7 +42,7 @@ PERSISTENT struct DurableQueue {
     void *heap_base;
     TRANSIENT gc_t *gc; // Garbage collector
     TRANSIENT atomic_uintptr_t free_list;
-    atomic_uintptr_t alloc_list;
+    TRANSIENT atomic_uintptr_t alloc_list;
 };
 
 // Allocate node; The node is made entirely persistent by the time this function returns...
@@ -51,6 +51,8 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
 struct DurableQueueNode *DurableQueue_alloc(struct DurableQueue *dq) TRANSIENT;
 
 void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT;
+
+void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT;
 
 // Currently, this data structure expects an _entire_ region of "persistent" memory
 // as its heap, until a more suitable persistent memory allocator can be used...

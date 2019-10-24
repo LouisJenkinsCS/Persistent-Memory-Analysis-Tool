@@ -12,8 +12,9 @@
 #include "durable_queue.h"
 #include <qsbr/gc.h>
 
-#define N (64 * 1024)
-#define SIZE (sizeof(struct DurableQueue) + N * sizeof(struct DurableQueueNode))
+// Size is N + 1 as we need space for the sentinel node
+#define N 1024
+#define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 
 int main(int argc, char *argv[]) {
@@ -27,5 +28,6 @@ int main(int argc, char *argv[]) {
 		assert(DurableQueue_enqueue(dq, i) == true);
 	}
 	assert(DurableQueue_enqueue(dq, -1) == false);
+	free(heap);
 	return 0;
 }
