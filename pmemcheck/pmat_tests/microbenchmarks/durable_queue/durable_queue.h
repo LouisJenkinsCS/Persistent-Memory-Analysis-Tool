@@ -13,13 +13,16 @@
 #define TRANSIENT
 #define PERSISTENT
 
+#define DQ_NULL -1
+#define DQ_EMPTY -2
+
 #define FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr));
 #define DQ_HEAP(dq) (dq->heap_base + dq->heap_offset)
 #define DQ_HEAP_ALLOC(dq, sz) (dq->heap_base + atomic_fetch_add(&dq->heap_offset, sz))
 
 PERSISTENT struct DurableQueueNode {
     int value;
-    int deqThreadID;
+    atomic_int_least64_t deqThreadID;
     atomic_uintptr_t next;
     TRANSIENT atomic_uintptr_t free_list_next;
     TRANSIENT atomic_uintptr_t alloc_list_next;
@@ -64,6 +67,8 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT;
 struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT;
 
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT;
+
+int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT;
 
 void DurableQueue_register(struct DurableQueue *dq) TRANSIENT;
 

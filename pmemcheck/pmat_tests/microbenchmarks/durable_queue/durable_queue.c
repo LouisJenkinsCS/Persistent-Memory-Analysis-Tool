@@ -87,7 +87,7 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
     dq->tail = ATOMIC_VAR_INIT((uintptr_t) node);
     FLUSH(&dq->tail);
     for (int i = 0; i < MAX_THREADS; i++) {
-        dq->returnedValues[i] = NULL;
+        dq->returnedValues[i] = -1;
         FLUSH(dq->returnedValues + i);
     }
     return dq;
@@ -146,4 +146,54 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 
 		#pragma omp taskyield
     }
+}
+
+int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT {
+	// Reset returned values
+	dq->returnedValues[tid] = DQ_NULL;
+	FLUSH(&dq->returnedValues[tid]);
+	DurableQueue_enter(dq);
+	
+	while (1) {
+		struct DurableQueueNode *first = dq->head;
+		struct DurableQueueNode *last = dq->tail;
+		struct DurableQueueNode *next = first->next;
+		if (first == dq->head) {
+			// Is Empty
+			if (first == last) {
+				if (next == NULL) {
+					dq->returnedValues[tid] = DQ_EMPTY;
+					FLUSH(&dq->returnedValues[tid]);
+					DurableQueue_exit(dq);
+					return DQ_EMPTY;
+				} else {
+					// Outdated tail
+					FLUSH(&last->next);
+					atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) &last, next);
+				}
+			} else {
+				int retval = next->value;
+				int_least64_t expected_tid = -1;
+				// Attempt to claim this queue node as our own
+				if (atomic_compare_exchange_strong(&next->deqThreadID, &expected_tid, tid)) {
+					// Paper does FLUSH(&first->next->deqThreadID) instead of just flushing &next->deqThreadID...
+					FLUSH(&next->deqThreadID);
+					dq->returnedValues[tid] = retval;
+					FLUSH(&dq->returnedValues[tid]);
+					atomic_compare_exchange_strong(&dq->head, &first, next);
+					return retval;
+				} else {
+					// Help push their operation along...
+					int *address = &dq->returnedValues[next->deqThreadID];
+					if (dq->head == first) {
+						// The owning thread has not yet pushed progress forward
+						FLUSH(&next->deqThreadID);
+						*address = retval;
+						FLUSH(address);
+						atomic_compare_exchange_strong(&dq->head, &first, next);
+					}
+				}
+			}
+		}
+	}
 }

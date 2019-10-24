@@ -30,9 +30,28 @@ int main(int argc, char *argv[]) {
 		for (int i = 0; i < N / omp_get_num_threads(); i++) {
 			assert(DurableQueue_enqueue(dq, i) == true);
 		}
+		#pragma omp barrier
+
+		#pragma omp master
+		printf("Finished enqueue...\n");
+
+		// Ensure that the queue is filled to the brim and that we cannot allocate any more
+		#pragma omp master
+		assert(DurableQueue_enqueue(dq, -1) == false); 
+		#pragma omp barrier
+
+		for (int i = 0; i < N / omp_get_num_threads(); i++) {
+			assert(DurableQueue_dequeue(dq, omp_get_thread_num()) >= 0);
+		}
+		#pragma omp barrier
+
+		#pragma omp master
+		printf("Finished dequeue...\n");
+
+		// Sanity check: Should be empty
+		assert(DurableQueue_dequeue(dq, omp_get_thread_num()) == DQ_EMPTY);
 		DurableQueue_unregister(dq);
 	}
-	assert(DurableQueue_enqueue(dq, -1) == false);
 	free(heap);
 	return 0;
 }
