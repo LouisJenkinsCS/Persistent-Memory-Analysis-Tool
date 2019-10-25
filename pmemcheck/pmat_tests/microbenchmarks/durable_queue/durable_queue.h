@@ -6,7 +6,7 @@
 #include <qsbr/gc.h>
 
 
-#define MAX_THREADS 4
+#define MAX_THREADS 8
 
 // For documentation purposes...
 // Refers to something being transient or persistent
@@ -21,13 +21,13 @@
 #define DQ_HEAP_ALLOC(dq, sz) (dq->heap_base + atomic_fetch_add(&dq->heap_offset, sz))
 
 PERSISTENT struct DurableQueueNode {
+    // When we are in recovery, we just make this value 'NULL' if not already...
+    TRANSIENT gc_entry_t PERSISTENT *gc_next;
     int value;
     atomic_int_least64_t deqThreadID;
     atomic_uintptr_t next;
     TRANSIENT atomic_uintptr_t free_list_next;
     TRANSIENT atomic_uintptr_t alloc_list_next;
-    // When we are in recovery, we just make this value 'NULL' if not already...
-    TRANSIENT gc_entry_t PERSISTENT *gc_next;
 };
 
 // Lock-Free Treiber Stack
@@ -41,7 +41,7 @@ PERSISTENT struct DurableQueue {
     atomic_uintptr_t head;
     atomic_uintptr_t tail;
     // Persistent pointer to a persistent integer
-    int PERSISTENT *returnedValues[MAX_THREADS];
+    int returnedValues[MAX_THREADS];
     void *heap_base;
     TRANSIENT gc_t *gc; // Garbage collector
     TRANSIENT atomic_uintptr_t free_list;
@@ -60,6 +60,10 @@ void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) T
 // Currently, this data structure expects an _entire_ region of "persistent" memory
 // as its heap, until a more suitable persistent memory allocator can be used...
 struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT;
+
+struct DurableQueue *DurableQueue_destroy(struct DurableQueue *dq) PERSISTENT;
+
+void DurableQueue_gc(struct DurableQueue *dq) TRANSIENT;
 
 /*
     Assumption: Uninitialized portion of heap is zero'd.

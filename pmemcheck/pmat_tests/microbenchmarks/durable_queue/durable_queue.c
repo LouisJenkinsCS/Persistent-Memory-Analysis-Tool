@@ -1,6 +1,8 @@
 #include "durable_queue.h"
 #include <assert.h>
 #include <stddef.h>
+#include <string.h>
+#include <stdio.h>
 
 // Allocate node; The node is made entirely persistent by the time this function returns...
 struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTENT {
@@ -11,8 +13,9 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
     FLUSH(&node->deqThreadID);
     node->next = 0;
     FLUSH(&node->next);
-	node->alloc_list_next = NULL;
-	node->free_list_next = NULL;
+	node->alloc_list_next = 0;
+	node->free_list_next = 0;
+	node->gc_next = NULL;
     return node;
 }
 
@@ -20,10 +23,11 @@ struct DurableQueueNode *DurableQueue_alloc(struct DurableQueue *dq) TRANSIENT {
     struct DurableQueueNode *head;
 	uintptr_t next;
 	do {
-		head = atomic_load(&dq->free_list);
+		head = (void *) atomic_load(&dq->free_list);
 		if (head == NULL) return NULL;
 		next = head->free_list_next;
-	} while(!atomic_compare_exchange_weak(&dq->free_list, &head, next));
+	} while(!atomic_compare_exchange_strong(&dq->free_list, &head, next));
+	assert(head->free_list_next != (uintptr_t) head);
 	return head;
 }
 
@@ -32,24 +36,46 @@ void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) T
     do {
         head = atomic_load(&dq->alloc_list);
         node->alloc_list_next = head;
-    } while(!atomic_compare_exchange_weak(&dq->alloc_list, &head, (uintptr_t) node));
+    } while(!atomic_compare_exchange_strong(&dq->alloc_list, &head, (uintptr_t) node));
 
     do {
         head = atomic_load(&dq->free_list);
         node->free_list_next = head;
-    } while(!atomic_compare_exchange_weak(&dq->free_list, &head, (uintptr_t) node));
+    } while(!atomic_compare_exchange_strong(&dq->free_list, &head, (uintptr_t) node));
 }
 
 void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT {
+	node->next = 0;
+	node->value = -1;
+	node->deqThreadID = -1;
+	node->gc_next = NULL;
+	node->free_list_next = 0;
     uintptr_t head;
     do {
-        head = dq->free_list;
+        head = atomic_load(&dq->free_list);
+		if (head == (uintptr_t) node) {
+			printf("Next = 0x%lx, Free_List_Next = 0x%lx, Alloc_List_Next = 0x%lx, deqThreadID = %ld\n", node->next, node->free_list_next, node->alloc_list_next, node->deqThreadID);
+			assert(0);
+		}
+		assert(head != (uintptr_t) node);
         node->free_list_next = head;
-    } while(!atomic_compare_exchange_weak(&dq->free_list, &head, (uintptr_t) node));
+    } while(!atomic_compare_exchange_strong(&dq->free_list, &head, (uintptr_t) node));
 }
 
-static void DurableQueue_gc(gc_entry_t *entry, void *arg) {
-	DurableQueue_free(arg, (void *) ((uintptr_t) entry) - offsetof(struct DurableQueueNode, gc_next));
+static void DurableQueue_gc_func(gc_entry_t *entry, void *arg) {
+	gc_entry_t *curr = entry;
+	int numEntries = 0;
+	while (curr) {
+		gc_entry_t *tmp = curr->next;
+		DurableQueue_free(arg, (void *) curr);
+		curr = tmp;
+		numEntries++;
+	}
+	printf("Reclaimed %d entries!\n", numEntries);
+}
+
+void DurableQueue_gc(struct DurableQueue *dq) TRANSIENT {
+		gc_cycle(dq->gc);
 }
 
 // THREAD MUST BE REGISTRERED!
@@ -70,9 +96,9 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
     dq->heap_base = heap + sizeof(struct DurableQueue);
     FLUSH(&dq->heap_base);
 
-	dq->free_list = NULL;
-	dq->alloc_list = NULL;
-	dq->gc = gc_create(offsetof(struct DurableQueueNode, gc_next), DurableQueue_free, dq);
+	dq->free_list = 0;
+	dq->alloc_list = 0;
+	dq->gc = gc_create(offsetof(struct DurableQueueNode, gc_next), DurableQueue_gc_func, dq);
     struct DurableQueueNode *nodes = dq->heap_base;
     // Allocate all nodes ahead of time and add them to the free list...
     for (size_t i = 0; i < (sz - sizeof(struct DurableQueue)) / sizeof(struct DurableQueueNode); i++) {
@@ -93,6 +119,10 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
     return dq;
 }
 
+struct DurableQueue *DurableQueue_destroy(struct DurableQueue *dq) PERSISTENT {
+	gc_destroy(dq->gc);
+}
+
 void DurableQueue_register(struct DurableQueue *dq) TRANSIENT {
 	gc_register(dq->gc);
 }
@@ -108,7 +138,7 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
     // Header...
     struct DurableQueue *dq = (struct DurableQueue *) heap;
     // No setup has been done...
-    if (dq->heap_base == NULL || dq->head == NULL || dq->tail == NULL) {
+    if (dq->heap_base == NULL || dq->head == 0 || dq->tail == 0) {
         return DurableQueue_create(heap, sz);
     }
 }
@@ -128,19 +158,19 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 	FLUSH(&node->value);
 
     while (1) {
-        struct DurableQueueNode *last = atomic_load(&dq->tail);
-        struct DurableQueueNode *next = atomic_load(&last->next);
-        if (last == atomic_load(&dq->tail)) {
+        struct DurableQueueNode *last = (void *) dq->tail;
+        struct DurableQueueNode *next = (void *) last->next;
+        if (last == (void *) dq->tail) {
             if (next == NULL) {
-                if (atomic_compare_exchange_strong(&last->next, (uintptr_t *) &next, (uintptr_t) node)) {
+                if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
                     FLUSH(&last->next);
-                    atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) &last, (uintptr_t) node);
+                    atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
 					DurableQueue_exit(dq);
                     return true;
                 }
             } else {
 				FLUSH(&last->next);
-				atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) last, (uintptr_t) next);
+				atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
 			}
 		} 
 
@@ -155,10 +185,10 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 	DurableQueue_enter(dq);
 	
 	while (1) {
-		struct DurableQueueNode *first = dq->head;
-		struct DurableQueueNode *last = dq->tail;
-		struct DurableQueueNode *next = first->next;
-		if (first == dq->head) {
+		struct DurableQueueNode *first = (void *) dq->head;
+		struct DurableQueueNode *last = (void *) dq->tail;
+		struct DurableQueueNode *next = (void *) first->next;
+		if ((uintptr_t) first == dq->head) {
 			// Is Empty
 			if (first == last) {
 				if (next == NULL) {
@@ -169,7 +199,7 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				} else {
 					// Outdated tail
 					FLUSH(&last->next);
-					atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) &last, next);
+					atomic_compare_exchange_strong(&dq->tail, (uintptr_t *) &last, (uintptr_t) next);
 				}
 			} else {
 				int retval = next->value;
@@ -180,17 +210,19 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					FLUSH(&next->deqThreadID);
 					dq->returnedValues[tid] = retval;
 					FLUSH(&dq->returnedValues[tid]);
-					atomic_compare_exchange_strong(&dq->head, &first, next);
+					atomic_compare_exchange_strong(&dq->head, (uintptr_t *) &first, (uintptr_t) next);
+					gc_limbo(dq->gc, first);
+					DurableQueue_exit(dq);
 					return retval;
 				} else {
 					// Help push their operation along...
 					int *address = &dq->returnedValues[next->deqThreadID];
-					if (dq->head == first) {
+					if (dq->head == (uintptr_t) first) {
 						// The owning thread has not yet pushed progress forward
 						FLUSH(&next->deqThreadID);
 						*address = retval;
 						FLUSH(address);
-						atomic_compare_exchange_strong(&dq->head, &first, next);
+						atomic_compare_exchange_strong(&dq->head, (uintptr_t *) &first, (uintptr_t) next);
 					}
 				}
 			}
