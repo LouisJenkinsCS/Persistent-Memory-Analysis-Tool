@@ -15,7 +15,6 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
     FLUSH(&node->next);
 	node->alloc_list_next = 0;
 	node->free_list_next = 0;
-	node->gc_next = NULL;
     return node;
 }
 
@@ -48,7 +47,6 @@ void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) T
 	node->next = 0;
 	node->value = -1;
 	node->deqThreadID = -1;
-	node->gc_next = NULL;
 	node->free_list_next = 0;
     uintptr_t head;
     do {
@@ -62,30 +60,37 @@ void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) T
     } while(!atomic_compare_exchange_strong(&dq->free_list, &head, (uintptr_t) node));
 }
 
-static void DurableQueue_gc_func(gc_entry_t *entry, void *arg) {
-	gc_entry_t *curr = entry;
-	int numEntries = 0;
-	while (curr) {
-		gc_entry_t *tmp = curr->next;
-		DurableQueue_free(arg, (void *) curr);
-		curr = tmp;
-		numEntries++;
-	}
-	printf("Reclaimed %d entries!\n", numEntries);
-}
-
+// Must be called when _no other thread is mutating the queue_
+// Mark and sweep (stop the world)
 void DurableQueue_gc(struct DurableQueue *dq) TRANSIENT {
-		gc_cycle(dq->gc);
+	struct DurableQueueNode *node = dq->head;
+	
+	// Calculate number of nodes...
+	size_t sz = 0;
+	for (struct DurableQueueNode *node = dq->alloc_list; node; node = node->alloc_list_next, sz++) ;
+
+	// Allocate a buffer of nodes for mark-sweep
+	struct DurableQueueNode **nodes = malloc(sizeof(struct DurableQueueNode *) * sz);
+	for (int i = 0; i < sz; i++) nodes[i] = NULL;
+	for (struct DurableQueueNode *node = dq->head; node; node = node->next) {
+		nodes[(((uintptr_t) node) - (uintptr_t) dq->heap_base) / sizeof(struct DurableQueueNode)] = node;
+	}
+
+	// Anything that is NULL has not been found... add back to free list...
+	for (size_t i = 0; i < sz; i++) {
+		if(!nodes[i]) {
+			DurableQueue_free(dq, dq->heap_base + i * sizeof(struct DurableQueueNode));
+		}
+	}
+	free(nodes);
 }
 
-// THREAD MUST BE REGISTRERED!
 static void DurableQueue_enter(struct DurableQueue *dq) {
-	gc_crit_enter(dq->gc);
+	// NOP
 }
 
-// THREAD MUST BE REGISTERED!
 static void DurableQueue_exit(struct DurableQueue *dq) {
-	gc_crit_exit(dq->gc);
+	// NOP
 }
 
 // Currently, this data structure expects an _entire_ region of "persistent" memory
@@ -98,7 +103,6 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
 
 	dq->free_list = 0;
 	dq->alloc_list = 0;
-	dq->gc = gc_create(offsetof(struct DurableQueueNode, gc_next), DurableQueue_gc_func, dq);
     struct DurableQueueNode *nodes = dq->heap_base;
     // Allocate all nodes ahead of time and add them to the free list...
     for (size_t i = 0; i < (sz - sizeof(struct DurableQueue)) / sizeof(struct DurableQueueNode); i++) {
@@ -120,15 +124,15 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
 }
 
 struct DurableQueue *DurableQueue_destroy(struct DurableQueue *dq) PERSISTENT {
-	gc_destroy(dq->gc);
+	// NOP
 }
 
 void DurableQueue_register(struct DurableQueue *dq) TRANSIENT {
-	gc_register(dq->gc);
+	// NOP
 }
 
 void DurableQueue_unregister(struct DurableQueue *dq) TRANSIENT {
-	gc_unregister(dq->gc);
+	// NOP
 }
 
 /*
@@ -211,7 +215,6 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					dq->returnedValues[tid] = retval;
 					FLUSH(&dq->returnedValues[tid]);
 					atomic_compare_exchange_strong(&dq->head, (uintptr_t *) &first, (uintptr_t) next);
-					gc_limbo(dq->gc, first);
 					DurableQueue_exit(dq);
 					return retval;
 				} else {

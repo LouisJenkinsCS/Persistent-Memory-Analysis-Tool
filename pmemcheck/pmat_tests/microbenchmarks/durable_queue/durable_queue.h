@@ -3,7 +3,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
-#include <qsbr/gc.h>
 
 
 #define MAX_THREADS 8
@@ -21,8 +20,6 @@
 #define DQ_HEAP_ALLOC(dq, sz) (dq->heap_base + atomic_fetch_add(&dq->heap_offset, sz))
 
 PERSISTENT struct DurableQueueNode {
-    // When we are in recovery, we just make this value 'NULL' if not already...
-    TRANSIENT gc_entry_t PERSISTENT *gc_next;
     int value;
     atomic_int_least64_t deqThreadID;
     atomic_uintptr_t next;
@@ -43,7 +40,6 @@ PERSISTENT struct DurableQueue {
     // Persistent pointer to a persistent integer
     int returnedValues[MAX_THREADS];
     void *heap_base;
-    TRANSIENT gc_t *gc; // Garbage collector
     TRANSIENT atomic_uintptr_t free_list;
     TRANSIENT atomic_uintptr_t alloc_list;
 };

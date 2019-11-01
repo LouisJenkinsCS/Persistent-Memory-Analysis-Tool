@@ -15,13 +15,12 @@
 #include <time.h>
 
 // Size is N + 1 as we need space for the sentinel node
-#define ITERATIONS_PER_CYCLE 100
-#define N (64 * 1024)
+#define N (1024 * 1024)
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 // Sanity Check to determine whether or not the queue is working...
 static void check_queue(struct DurableQueue *dq) {
-	#pragma omp parallel 
+	#pragma omp parallel
 	{
 		DurableQueue_register(dq);
 		for (int i = 0; i < N / omp_get_num_threads(); i++) {
@@ -47,14 +46,21 @@ static void check_queue(struct DurableQueue *dq) {
 
 		// Sanity check: Should be empty
 		assert(DurableQueue_dequeue(dq, omp_get_thread_num()) == DQ_EMPTY);
+
+		#pragma omp master
+		DurableQueue_gc(dq);
+
+
 		DurableQueue_unregister(dq);
 	}
+	//DurableQueue_gc(dq);
 }
 
 static void do_benchmark(struct DurableQueue *dq, int seconds) {
 	srand(0);
 	time_t start;
 	time(&start);
+	atomic_bool done = false;
 
 	#pragma omp parallel
 	{
@@ -64,14 +70,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		uint64_t iterations = 0;
 		DurableQueue_register(dq);
 
-		while (1) {
-			time(&end);
-			int time_taken = end - start;
-
-			if (time_taken >= seconds) {
-				break;
-			}
-
+		while (!done) {
 			int rng = rand();
 			if (rng % 2 == 0) {
 				bool success = DurableQueue_enqueue(dq, rng);
@@ -83,31 +82,33 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 				if (retval == DQ_EMPTY) {
 					bool success = DurableQueue_enqueue(dq, rng);
 					// If this fails too, we ran out of memory, do a full GC...
+					// We wait for the master as only they can handle stop-the-world GC
+					#pragma omp barrier
+
 					#pragma omp master
 					{
 						if (!success) {
-							printf("[%d] Forced GC due at %d seconds!\n", omp_get_thread_num(), time_taken);
 							DurableQueue_gc(dq);
 						}
-					}
-					
-				}
-			}
+						time(&end);
+						int time_taken = end - start;
 
-			#pragma omp master
-			{
-				iterations++;
-				if ((iterations % ITERATIONS_PER_CYCLE) == 0) {
-					DurableQueue_gc(dq);
-					printf("Did a GC\n");
+						if (time_taken >= seconds) {
+							done = true;
+						}
+					}
+
+					#pragma omp barrier
+				
 				}
 			}
 		}
+		#pragma omp master
+		DurableQueue_gc(dq);
 
 		DurableQueue_unregister(dq);
 	}
 
-	DurableQueue_gc(dq);
 }
 
 int main(int argc, char *argv[]) {
