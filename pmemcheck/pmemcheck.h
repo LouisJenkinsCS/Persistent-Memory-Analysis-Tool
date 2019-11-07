@@ -85,7 +85,8 @@ typedef
        VG_USERREQ__PMC_PMAT_REGISTER,
        VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,
        VG_USERREQ__PMC_PMAT_CRASH_DISABLE,
-       VG_USERREQ__PMC_PMAT_CRASH_ENABLE
+       VG_USERREQ__PMC_PMAT_CRASH_ENABLE,
+       VG_USERREQ__PMC_PMAT_TRANSIENT
    } Vg_PMemCheckClientRequest;
 
 
@@ -242,5 +243,10 @@ typedef
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_CRASH_ENABLE, \
             0, 0, 0, 0, 0)
 
+// TODO: Make this an EXPR instead so that it can return if it succeeded!
+/** Inform PMAT to ignore this address (marked as being transient) */
+#define PMAT_TRANSIENT(_qzz_addr, _qzz_sz) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_TRANSIENT, \
+            (_qzz_addr), (_qzz_sz), 0, 0, 0)
 
 #endif

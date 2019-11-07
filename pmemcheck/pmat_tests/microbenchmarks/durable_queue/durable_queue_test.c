@@ -61,8 +61,9 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 	time_t start;
 	time(&start);
 	atomic_bool done = false;
+	size_t numOperations = 0;
 
-	#pragma omp parallel
+	#pragma omp parallel reduction(+: numOperations)
 	{
 		#pragma omp master
 		printf("Number of threads: %d\n", omp_get_num_threads());
@@ -71,6 +72,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		DurableQueue_register(dq);
 
 		while (!done) {
+			numOperations++;
 			int rng = rand();
 			if (rng % 2 == 0) {
 				bool success = DurableQueue_enqueue(dq, rng);
@@ -103,12 +105,14 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 				}
 			}
 		}
+		printf("Thread %d performed %lu operations\n", omp_get_thread_num(), numOperations);
+
 		#pragma omp master
 		DurableQueue_gc(dq);
 
 		DurableQueue_unregister(dq);
 	}
-
+	printf("Performed %ld operations\n", numOperations);
 }
 
 int main(int argc, char *argv[]) {

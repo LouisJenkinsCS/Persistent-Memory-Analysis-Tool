@@ -1,4 +1,5 @@
 #include "durable_queue.h"
+#include <valgrind/pmemcheck.h>
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
@@ -13,6 +14,8 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
     FLUSH(&node->deqThreadID);
     node->next = 0;
     FLUSH(&node->next);
+	PMAT_TRANSIENT(&node->alloc_list_next, sizeof(node->alloc_list_next));
+	PMAT_TRANSIENT(&node->free_list_next, sizeof(node->free_list_next));
 	node->alloc_list_next = 0;
 	node->free_list_next = 0;
     return node;
@@ -45,8 +48,11 @@ void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) T
 
 void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT {
 	node->next = 0;
+	FLUSH(&node->next);
 	node->value = -1;
+	FLUSH(&node->value);
 	node->deqThreadID = -1;
+	FLUSH(&	node->deqThreadID);
 	node->free_list_next = 0;
     uintptr_t head;
     do {
@@ -101,7 +107,9 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
     dq->heap_base = heap + sizeof(struct DurableQueue);
     FLUSH(&dq->heap_base);
 
+	PMAT_TRANSIENT(&dq->free_list, sizeof(dq->free_list));
 	dq->free_list = 0;
+	PMAT_TRANSIENT(&dq->alloc_list, sizeof(dq->alloc_list));
 	dq->alloc_list = 0;
     struct DurableQueueNode *nodes = dq->heap_base;
     // Allocate all nodes ahead of time and add them to the free list...

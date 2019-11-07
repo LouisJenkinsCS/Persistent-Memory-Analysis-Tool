@@ -92,6 +92,9 @@ static struct pmem_ops {
     /** Verification program */
     HChar *pmat_verifier;
 
+    /** Set of addresses to ignore (marked transient) */
+    OSet *pmat_transient_addresses;
+
     /** Holds possible multiple overwrite error events. */
     struct pmem_st **multiple_stores;
 
@@ -220,9 +223,28 @@ static Bool find_file_by_addr(const struct pmat_registered_file *lhs, const stru
 static Bool
 is_pmem_access(Addr addr, SizeT size)
 {
+    if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) {
+        return False;
+    }
+    
     struct pmat_registered_file file = {0};
     file.addr = addr;
-    return !!VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+    Bool found = !!VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+    if (found) {
+        // Check if it is transient...
+        if (VG_(OSetGen_Size)(pmem.pmat_transient_addresses) == 0) {
+            return True;
+        } else {
+            struct pmat_transient_entry trans = {0};
+            trans.addr = addr;
+            trans.size = size;
+            if (VG_(OSetGen_Lookup)(pmem.pmat_transient_addresses, &trans)) {
+                return False;
+            } else {
+                return True;
+            }
+        }
+    }
 }
 
 static void do_writeback(struct pmat_cache_entry *entry);
@@ -1978,6 +2000,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_PMAT_REGISTER != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_ENABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_DISABLE != arg[0]
+            && VG_USERREQ__PMC_PMAT_TRANSIENT != arg[0]
             && VG_USERREQ__PMC_RESERVED1 != arg[0]
             && VG_USERREQ__PMC_RESERVED2 != arg[0]
             && VG_USERREQ__PMC_RESERVED3 != arg[0]
@@ -1990,6 +2013,23 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         return False;
 
     switch (arg[0]) {
+        // Add to table of addresses to ignore.
+        case VG_USERREQ__PMC_PMAT_TRANSIENT: {
+            // Check if the address is already included in some persistent
+            // memory region that is currently enabled.
+            if (!is_pmem_access(arg[1], arg[2])) {
+                break;
+            }
+            struct pmat_transient_entry *entry = VG_(OSetGen_AllocNode)(pmem.pmat_transient_addresses, sizeof(*entry));
+            entry->addr = arg[1];
+            entry->size = arg[2];
+
+            // Check if exists...
+            if (!VG_(OSetGen_Contains)(pmem.pmat_transient_addresses, entry)) {
+                VG_(OSetGen_Insert)(pmem.pmat_transient_addresses, entry);
+            }
+            break;
+        }
         case VG_USERREQ__PMC_PMAT_CRASH_ENABLE: {
             pmem.pmat_should_verify = True;
             break;
@@ -2252,6 +2292,7 @@ pmc_post_clo_init(void)
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_write_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free),
             4 * NUM_WB_ENTRIES, (SizeT) sizeof(struct pmat_write_buffer_entry));
+    pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
     pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmc.main.cpci.-1", VG_(free));

@@ -27,13 +27,6 @@ PERSISTENT struct DurableQueueNode {
     TRANSIENT atomic_uintptr_t alloc_list_next;
 };
 
-// Lock-Free Treiber Stack
-TRANSIENT struct FreeListNode {
-    void *addr;
-    atomic_uintptr_t next;
-};
-
-
 PERSISTENT struct DurableQueue {
     atomic_uintptr_t head;
     atomic_uintptr_t tail;

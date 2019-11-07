@@ -30,6 +30,11 @@ struct pmem_st {
     } state;
 };
 
+struct pmat_transient_entry {
+    Addr addr;
+    ULong size;
+};
+
 struct pmat_cache_entry {
     // Bitmap to keep track of dirty bits
     ExeContext *lastPendingStore;
@@ -111,6 +116,8 @@ Word cmp_pmat_registered_files1(const void *key, const void *elem);
 Word cmp_pmat_registered_files2(const void *key, const void *elem);
 
 Word cmp_pmat_write_buffer_entries(const void *key, const void *elem);
+
+Word cmp_pmat_transient_entries(const void *key, const void *elem);
 
 /* Check and update the given warning event register. */
 void add_warning_event(struct pmem_st **event_register, UWord *nevents,

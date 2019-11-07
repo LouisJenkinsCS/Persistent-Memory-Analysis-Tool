@@ -47,6 +47,19 @@ Word cmp_pmat_write_buffer_entries(const void *key, const void *elem) {
     return cmp_pmat_cache_entries(lhs->entry, rhs->entry);
 }
 
+Word cmp_pmat_transient_entries(const void *key, const void *elem) {
+    // LHS _must_ be the true 
+    const struct pmat_transient_entry *lhs = (const struct pmat_transient_entry *) (key);
+    const struct pmat_transient_entry *rhs = (const struct pmat_transient_entry *) (elem);
+    
+    if (lhs->addr + lhs->size <= rhs->addr)
+        return -1;
+    else if (lhs->addr >= rhs->addr + rhs->size)
+        return 1;
+    else
+        return 0;
+}
+
 Word 
 cmp_pmat_registered_files1(const void *key, const void *elem)
 {
