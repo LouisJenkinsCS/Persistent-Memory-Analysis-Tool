@@ -2,6 +2,7 @@
 #include <valgrind/pmemcheck.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 /*
@@ -25,7 +26,7 @@ int main(int argc, char *argv[]) {
 
     size_t N = strtoul(argv[2], NULL, 10);
     assert(N > 0);
-    size_t size = sizeof(struct list_root) + N * sizeof(struct list_node);
+    size_t size = sizeof(struct list_root) + (N+1) * sizeof(struct list_node);
 
 	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, size) == 0);
     memset(heap, 0, size);

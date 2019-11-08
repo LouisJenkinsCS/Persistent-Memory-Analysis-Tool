@@ -5,7 +5,7 @@ TEST_OBJ=$(TEST_SRC:.c=.o)
 TEST_EXEC=linked_list
 VERF_SRC=linked_list.c linked_list_verifier.c
 VERF_OBJ=$(VERF_SRC:.c=.o)
-VERF_EXEC=linked_list_verification
+VERF_EXEC=linked_list_verifier
 
 all: $(VERF_EXEC) $(TEST_EXEC)
 

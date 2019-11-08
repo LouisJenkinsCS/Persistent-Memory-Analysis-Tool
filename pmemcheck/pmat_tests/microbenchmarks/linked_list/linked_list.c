@@ -20,24 +20,25 @@ bool check_consistency(struct list_root *root) {
 	 * value should be set properly.
 	 */
 	if (node == NULL)
-		return 0;
+		return true;
     int prev = -1;
     int i = 0;
 	do {
 		if (node->value == 0) {
-			//printf("Came across bad node value %d\n", node->value);
-            return -i;
+			fprintf(stderr, "Came across uninitialized node value at offset %lx\n", (uintptr_t) node - (uintptr_t) root);
+            return false;
         } 
         if (prev != -1 && prev != node->value + 1) {
-            return prev - node->value;
+			fprintf(stderr, "Came across node  with bad value (prev=%d, node->value=%ld) at offset %lx\n",
+				prev, node->value, (uintptr_t) node - (uintptr_t) root);
+            return false;
         } else {
             prev = node->value;
         }
 		node = NODE_PTR(root, node->next);
         i++;
 	} while (node != NULL);
-
-	return 0;
+	return true;
 }
 
 /*
@@ -45,23 +46,18 @@ bool check_consistency(struct list_root *root) {
  */
 void list_print(struct list_root *list)
 {
-	FILE *fp;
-	fp = fopen("pmreorder_list.log", "w+");
-	fprintf(fp, "List:\n");
+	printf("List:\n");
 
 	struct list_node *node = NODE_PTR(list, list->head);
 	if (node == NULL) {
-		fprintf(fp, "List is empty");
-		goto end;
+		printf("List is empty");
+		return;
 	}
 
 	do {
-		fprintf(fp, "Value: %d\n", node->value);
+		printf("Value: %ld\n", node->value);
 		node = NODE_PTR(list, node->next);
 	} while (node != NULL);
-
-end:
-	fclose(fp);
 }
 
 /*

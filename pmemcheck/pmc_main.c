@@ -36,6 +36,12 @@
 #include "pmemcheck.h"
 #include "pmc_include.h"
 
+#ifdef VG_(VGO_linux)
+#include "vki-linux.h"
+#else
+#error "Linux required!"
+#endif
+
 /* track at max this many multiple overwrites */
 #define MAX_MULT_OVERWRITES 10000UL
 
@@ -88,6 +94,21 @@ static struct pmem_ops {
 
     /** Set of addresses to ignore (marked transient) */
     OSet *pmat_transient_addresses;
+
+    /** Average nanoseconds per verification call*/
+    Double pmat_average_verification_time;
+
+    /** Minimum nanoseconds per verification call*/
+    Double pmat_min_verification_time;
+
+    /** Maximum nanoseconds per verification call*/
+    Double pmat_max_verification_time;
+
+    /** Mean nanoseconds per verification call*/
+    Double pmat_mean_verification_time;
+
+    /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
+    Double pmat_ssd_verification_time;
 } pmem;
 
 /*
@@ -121,6 +142,19 @@ static ULong sblocks = 0;
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+// Update statistics for nanoseconds per verification call
+static void update_stats(Double ns) {
+    Double delta1 = ns - pmem.pmat_mean_verification_time;
+    pmem.pmat_mean_verification_time += delta1 / pmem.pmat_num_verifications;
+    Double delta2 = ns - pmem.pmat_mean_verification_time;
+    pmem.pmat_ssd_verification_time += delta1 * delta2;
+}
+
+static void get_stats(Double *mean, Double *variance) {
+    *mean = pmem.pmat_mean_verification_time;
+    *variance = pmem.pmat_ssd_verification_time / pmem.pmat_num_verifications;
+}
 
 // Comparator for finding a file associated with a name
 static Int find_file_by_name(const struct pmat_registered_file *lhs, const struct pmat_registered_file *rhs) {
@@ -537,6 +571,7 @@ static void simulate_crash(void) {
     // Make copy of tests first...
     Int pid = VG_(fork)();
     if (pid != 0) {
+        vki_timer_t timer;
         // Parent...
         Int retval;
         Int retpid = VG_(waitpid)(pid, &retval, 0);
@@ -1697,6 +1732,7 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
+    VG_(memset)(&pmem, 0, sizeof(pmem));
     pmem.pmat_num_verifications = 0;
     pmem.pmat_num_bad_verifications = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free), 
