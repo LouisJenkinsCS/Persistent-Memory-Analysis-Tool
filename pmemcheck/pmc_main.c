@@ -1501,27 +1501,10 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 {
     if (!VG_IS_TOOL_USERREQ('P', 'C', arg[0])
             && VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH != arg[0]
-            && VG_USERREQ__PMC_REGISTER_PMEM_MAPPING != arg[0]
-            && VG_USERREQ__PMC_REGISTER_PMEM_FILE != arg[0]
-            && VG_USERREQ__PMC_REMOVE_PMEM_MAPPING != arg[0]
-            && VG_USERREQ__PMC_CHECK_IS_PMEM_MAPPING != arg[0]
             && VG_USERREQ__PMC_DO_FLUSH != arg[0]
             && VG_USERREQ__PMC_DO_FENCE != arg[0]
             && VG_USERREQ__PMC_WRITE_STATS != arg[0]
             && VG_USERREQ__GDB_MONITOR_COMMAND != arg[0]
-            && VG_USERREQ__PMC_PRINT_PMEM_MAPPINGS != arg[0]
-            && VG_USERREQ__PMC_EMIT_LOG != arg[0]
-            && VG_USERREQ__PMC_START_TX != arg[0]
-            && VG_USERREQ__PMC_START_TX_N != arg[0]
-            && VG_USERREQ__PMC_END_TX != arg[0]
-            && VG_USERREQ__PMC_END_TX_N != arg[0]
-            && VG_USERREQ__PMC_ADD_TO_TX != arg[0]
-            && VG_USERREQ__PMC_ADD_TO_TX_N != arg[0]
-            && VG_USERREQ__PMC_REMOVE_FROM_TX != arg[0]
-            && VG_USERREQ__PMC_REMOVE_FROM_TX_N != arg[0]
-            && VG_USERREQ__PMC_ADD_THREAD_TO_TX_N != arg[0]
-            && VG_USERREQ__PMC_REMOVE_THREAD_FROM_TX_N != arg[0]
-            && VG_USERREQ__PMC_ADD_TO_GLOBAL_TX_IGNORE != arg[0]
             && VG_USERREQ__PMC_PMAT_REGISTER != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_ENABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_DISABLE != arg[0]
@@ -1606,14 +1589,6 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {
             simulate_crash();
-            break;
-        }
-
-        case VG_USERREQ__PMC_REGISTER_PMEM_FILE: {
-            *ret = 1;
-            Int fd = (Int)arg[1];
-            if (fd >= 0)
-                *ret = register_new_file(fd, arg[2], arg[3], arg[4]);
             break;
         }
 
