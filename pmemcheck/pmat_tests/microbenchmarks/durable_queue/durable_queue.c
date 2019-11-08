@@ -33,6 +33,14 @@ struct DurableQueueNode *DurableQueue_alloc(struct DurableQueue *dq) TRANSIENT {
 	return head;
 }
 
+static void push_alloc_list(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT {
+	uintptr_t head;
+	do {
+        head = atomic_load(&dq->alloc_list);
+        node->alloc_list_next = head;
+    } while(!atomic_compare_exchange_strong(&dq->alloc_list, &head, (uintptr_t) node));
+}
+
 void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT {
 	uintptr_t head;
     do {
@@ -143,16 +151,121 @@ void DurableQueue_unregister(struct DurableQueue *dq) TRANSIENT {
 	// NOP
 }
 
+// Verify - significantly faster than full on recovery...
+bool DurableQueue_verify(void *heap, size_t sz) {
+	// Header...
+    struct DurableQueue *dq = (struct DurableQueue *) heap;
+	intptr_t off;
+	if (heap + sizeof(struct DurableQueue) > dq->heap_base) {
+		off = (heap + sizeof(struct DurableQueue)) - dq->heap_base;
+	} else {
+		off = - (intptr_t) (dq->heap_base - (heap + sizeof(struct DurableQueue)));
+	}
+	dq->heap_base = heap + sizeof(*dq);
+	dq->head += off;
+	dq->tail += off;
+
+	long numEnqueue = dq->metadata[0];
+	long numDequeue = dq->metadata[1];
+	long expectedNodesFound = numEnqueue - numDequeue;
+	for (int i = 2; i < 8; i++) {
+		if (dq->metadata[i] != 0) {
+			fprintf(stderr, "Metadata (checksum) entry %d has value %ld and not 0!\n", i, dq->metadata[i]);
+			return false;
+		}
+	}
+	bool foundTail = false;
+	long actualNodesFound = 0;
+	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
+		if (node->next) node->next += off;
+		if (node == dq->tail) foundTail = true;
+		if (node->value == -1) {
+			fprintf(stderr, "Reachable node has a value of -1!\n");
+			return false;
+		}
+		actualNodesFound++;
+	}
+
+	if (!foundTail) {
+		fprintf(stderr, "Did not find tail while traversing!\n");
+		return false;
+	}
+
+	if (actualNodesFound < expectedNodesFound) {
+		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld!\n", actualNodesFound, expectedNodesFound);
+		return false;
+	}
+	return true;
+}
+
 /*
-    Assumption: Uninitialized portion of heap is zero'd.
+    Recovery, but it should _only_ be called once we know for a fact that the
+	heap has been initialized. Perhaps later we can extend recovery to test 
+	to what extent the heap has been initialized and recover that way, but for
+	the time being, this is merely a simple test.
 */
 struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
     // Header...
     struct DurableQueue *dq = (struct DurableQueue *) heap;
-    // No setup has been done...
-    if (dq->heap_base == NULL || dq->head == 0 || dq->tail == 0) {
-        return DurableQueue_create(heap, sz);
+	intptr_t off;
+	if (heap + sizeof(struct DurableQueue) > dq->heap_base) {
+		off = (heap + sizeof(struct DurableQueue)) - dq->heap_base;
+	} else {
+		off = - (intptr_t) (dq->heap_base - (heap + sizeof(struct DurableQueue)));
+	}
+	dq->heap_base = heap + sizeof(*dq);
+
+	// Reconstruct alloc_list
+	struct DurableQueueNode *nodes = dq->heap_base;
+    // Allocate all nodes ahead of time and add them to the free list...
+    for (size_t i = 0; i < (sz - sizeof(struct DurableQueue)) / sizeof(struct DurableQueueNode); i++) {
+        push_alloc_list(dq, nodes + i);
     }
+
+	// Repair queue by redirecting pointers
+	dq->head += off;
+	dq->tail += off;
+	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
+		if (node->next) node->next += off;
+	}
+	
+	// Reclaim
+	DurableQueue_gc(dq);
+
+	// Check if every reachable node is valid.
+	long numEnqueue = dq->metadata[0];
+	long numDequeue = dq->metadata[1];
+	long expectedNodesFound = numEnqueue - numDequeue;
+	for (int i = 2; i < 8; i++) {
+		if (dq->metadata[i] != 0) {
+			fprintf(stderr, "Metadata (checksum) entry %d has value %ld and not 0!\n", i, dq->metadata[i]);
+			return NULL;
+		}
+	}
+	long actualNodesFound = 0;
+	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
+		if (node->value == -1) {
+			fprintf(stderr, "Reachable node has a value of -1!\n");
+			return NULL;
+		}
+		actualNodesFound++;
+	}
+
+	if (actualNodesFound < expectedNodesFound) {
+		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld!\n", actualNodesFound, expectedNodesFound);
+		return NULL;
+	}
+	return dq;
+}
+
+static void post_enqueue(struct DurableQueue *dq) {
+	dq->metadata[0]++;
+	FLUSH(&dq->metadata[0]);
+}
+
+static void post_dequeue(struct DurableQueue *dq) {
+	dq->metadata[1]++;
+	FLUSH(&dq->metadata[1]);
 }
 
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
@@ -177,12 +290,15 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
                 if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
                     FLUSH(&last->next);
                     atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
+					FLUSH(&dq->tail);
+					post_enqueue(dq);
 					DurableQueue_exit(dq);
                     return true;
                 }
             } else {
 				FLUSH(&last->next);
 				atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
+				FLUSH(&dq->tail);
 			}
 		} 
 
@@ -223,6 +339,8 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					dq->returnedValues[tid] = retval;
 					FLUSH(&dq->returnedValues[tid]);
 					atomic_compare_exchange_strong(&dq->head, (uintptr_t *) &first, (uintptr_t) next);
+					FLUSH(&dq->head);
+					post_dequeue(dq);
 					DurableQueue_exit(dq);
 					return retval;
 				} else {
@@ -234,6 +352,8 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 						*address = retval;
 						FLUSH(address);
 						atomic_compare_exchange_strong(&dq->head, (uintptr_t *) &first, (uintptr_t) next);
+						// Needed, despite not being mentioned in the paper.
+						FLUSH(&dq->head);
 					}
 				}
 			}

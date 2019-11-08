@@ -226,7 +226,7 @@ is_pmem_access(Addr addr, SizeT size)
     if (VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) {
         return False;
     }
-    
+
     struct pmat_registered_file file = {0};
     file.addr = addr;
     Bool found = !!VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
@@ -245,6 +245,7 @@ is_pmem_access(Addr addr, SizeT size)
             }
         }
     }
+    return False;
 }
 
 static void do_writeback(struct pmat_cache_entry *entry);
@@ -723,6 +724,56 @@ merge_stores(struct pmem_st *to_merge,
 
 typedef void (*split_clb)(struct pmem_st *store,  OSet *set, Bool preallocated);
 
+static void dump(void) {
+    VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
+            (pmem.pmat_cache_entries));
+    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+
+    // To prevent having to print out ExeContext for cache lines with the same stack
+    // trace, we instead create mappings from stack traces to cache lines.
+    OSet *unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
+    struct pmat_cache_entry *entry;
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &entry->lastPendingStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
+        *node = entry->lastPendingStore;
+        VG_(OSetGen_Insert)(unique_cache_lines, node);
+        struct pmat_registered_file file = {0};
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+        if (!realFile) {
+            VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
+            VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+            struct pmat_registered_file *tmp;
+            while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+                VG_(emit)("File Found: (%lx, 0x%lx, 0x%lx)\n", tmp->descr, tmp->addr, tmp->size);
+            }
+        }
+        tl_assert(realFile);
+        VG_(umsg)("['%s']\n", realFile->name);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        VG_(pp_ExeContext)(entry->lastPendingStore);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+    }
+
+    VG_(OSetGen_Destroy)(unique_cache_lines);
+
+    VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
+    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    struct pmat_write_buffer_entry *wbentry = NULL;
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+        struct pmat_cache_entry *entry = wbentry->entry;
+        struct pmat_registered_file file = {0};
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+        tl_assert(realFile);
+        VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        VG_(pp_ExeContext)(entry->lastPendingStore);
+        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+    }
+}
+
 static void copy_files(char *suffix) {
     VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
     struct pmat_registered_file *tmp;
@@ -760,6 +811,8 @@ static void stringify_stack_trace(ExeContext *context) {
     VG_(apply_StackTrace)(stringify_stack_trace_helper, &stackTraceStr, ep, ips, n_ips);
 }
 
+// TODO: Need to write stderr and stdout to their own temporary files; these files persist if recovery fails!
+// TODO: Need to set timeout for recovery operations, in case they do an infinite loop. Parent currently gets stuck in a syscall!
 static void simulate_crash(void) {
     if (!pmem.pmat_verifier) {
         VG_(fmsg)("[Error] Attempt to force a crash without a verification function!\n");
@@ -782,15 +835,18 @@ static void simulate_crash(void) {
             Int status = VKI_WEXITSTATUS(retval);
             if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
                 pmem.pmat_num_bad_verifications++;
+                dump();
                 copy_files("bad");
             } else if (status == 0) {
                 // NOP: Might want to save '.good' files as an option later...
             } else {
                 pmem.pmat_num_bad_verifications++;
+                dump();
                 copy_files("bad");
             }
         } else if (VKI_WIFSIGNALED(retval)) {
             pmem.pmat_num_bad_verifications++;
+            dump();
             copy_files("bad.coredump");
         } else {
             pmem.pmat_num_bad_verifications++;
@@ -1009,19 +1065,28 @@ handle_with_mult_stores(struct pmem_st *store)
 * \param[in] size The size of the store.
 * \param[in] value The value of the store.
 */
-static VG_REGPARM(3) void
-trace_pmem_store(Addr addr, SizeT size, UWord value)
+static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
 {
     // Check if this is a store to registered memory
     if (LIKELY(!is_pmem_access(addr, size))) {
         return;
     }
+
+    if (TRIM_CACHELINE(addr) != TRIM_CACHELINE(addr + size - 1)) {
+        UWord pt1 = 64 - OFFSET_CACHELINE(addr);
+        UWord pt2 = (size * 8) - pt1;
         
+        //trace_pmem_store(addr, pt1, value & (1 << (sizeof(UWord) - pt1));
+        //trace_pmem_store(addr, size - (64 - OFFSET_CACHELINE(addr)));
+        VG_(emit)("pt1=%ld, pt2=%ld\n", pt1, pt2);
+        VG_(emit)("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)\nMaybe split to %lx and %lx!\n", 
+            addr, addr + size, TRIM_CACHELINE(addr), TRIM_CACHELINE(addr + size), (1 << (pt1 * 8)) - 1, (1 << pt2) - 1);
+    }    
     ULong startOffset = OFFSET_CACHELINE(addr);
     ULong endOffset = OFFSET_CACHELINE(addr + size);
     if (OFFSET_CACHELINE(addr + size) == 0) endOffset = CACHELINE_SIZE;
     if (startOffset > endOffset) {
-        VG_(emit("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)", addr, addr + size, startOffset, endOffset));
+        VG_(emit)("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%d,%d)", addr, addr + size, startOffset, endOffset);
         //return;
     }
     //tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
@@ -1443,6 +1508,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
     wblookup.entry = entry;
     struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
     if (exist) {
+        exist->tid = tid;
         // Merge our cache line...
         exist->entry->dirtyBits |= entry->dirtyBits;
         for (ULong i = 0; i < CACHELINE_SIZE; i++) {
@@ -1472,7 +1538,6 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         Word nEntries = VG_(sizeXA)(arr);
         for (int i = 0; i < nEntries; i++) {
             wbentry = *(struct pmat_write_buffer_entry **) VG_(indexXA)(arr, i);
-            int sz = 1;
             write_to_file(wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
             VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
@@ -1513,6 +1578,7 @@ trace_pmem_flush(Addr addr)
 {
     /* use native cache size for flush */
     do_flush(addr, pmem.flush_align_size);
+    maybe_simulate_crash();
 }
 
 /*
@@ -1525,7 +1591,7 @@ static VG_REGPARM(1) void
 trace_pmem_flush_fence(Addr addr) 
 {
     do_flush(addr, pmem.flush_align_size);
-    do_fence();
+    _do_fence();
     maybe_simulate_crash();
 }
 

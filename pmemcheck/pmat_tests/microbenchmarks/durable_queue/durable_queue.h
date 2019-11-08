@@ -28,6 +28,10 @@ PERSISTENT struct DurableQueueNode {
 };
 
 PERSISTENT struct DurableQueue {
+    // metadata[0] = numEnqueues
+    // metadata[1] = numDequeues
+    // metadata[2-7] = padding... should be all 0's
+    atomic_long metadata[8];
     atomic_uintptr_t head;
     atomic_uintptr_t tail;
     // Persistent pointer to a persistent integer
@@ -58,6 +62,8 @@ void DurableQueue_gc(struct DurableQueue *dq) TRANSIENT;
     Assumption: Uninitialized portion of heap is zero'd.
 */
 struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT;
+
+bool DurableQueue_verify(void *heap, size_t sz);
 
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT;
 

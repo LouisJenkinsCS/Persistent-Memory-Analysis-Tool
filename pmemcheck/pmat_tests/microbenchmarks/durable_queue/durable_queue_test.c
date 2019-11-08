@@ -15,7 +15,7 @@
 #include <time.h>
 
 // Size is N + 1 as we need space for the sentinel node
-#define N (1024 * 1024)
+#define N (1024)
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 // Sanity Check to determine whether or not the queue is working...
@@ -125,16 +125,20 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Received a time of %s seconds, but needs to be greater than 0!", argv[1]);
 		exit(EXIT_FAILURE);
 	}
+
+	// Disable automatic crash simulation until after queue has been initialized
+	// and sanity checking has been performed.
+	PMAT_CRASH_DISABLE();
 	void *heap;
 	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, SIZE) == 0);
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
-    struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
-
+    struct DurableQueue *dq = DurableQueue_create(heap, SIZE);	
 	printf("Sanity checking queue...\n");
 	check_queue(dq);
 	printf("Sanity check complete, beginning benchmark for %d seconds...\n", seconds);
+	PMAT_CRASH_ENABLE();
 	do_benchmark(dq, seconds);
-
+	PMAT_CRASH_DISABLE();
     DurableQueue_destroy(dq);
 	free(heap);
 	return 0;
