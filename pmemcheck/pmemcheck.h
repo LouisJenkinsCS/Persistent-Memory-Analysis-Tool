@@ -64,6 +64,8 @@ typedef
        VG_USERREQ__PMC_RESERVED8,  /* Do not use. */
        VG_USERREQ__PMC_RESERVED6,  /* Do not use. */
        VG_USERREQ__PMC_PMAT_REGISTER,
+       VG_USERREQ__PMC_PMAT_UNREGISTER_BY_NAME,
+       VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR,
        VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,
        VG_USERREQ__PMC_PMAT_CRASH_DISABLE,
        VG_USERREQ__PMC_PMAT_CRASH_ENABLE,
@@ -100,6 +102,14 @@ typedef
 #define PMAT_REGISTER(_qzz_name, _qzz_addr, _qzz_size) \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_REGISTER, \
             (_qzz_name), (_qzz_addr), (_qzz_size), 0, 0)
+
+#define PMAT_UNREGISTER_BY_NAME(_qzz_name) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_UNREGISTER_BY_NAME, \
+            (_qzz_name), 0, 0, 0, 0)
+
+#define PMAT_UNREGISTER_BY_ADDR(_qzz_addr) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR, \
+            (_qzz_addr), 0, 0, 0, 0)
 
 /** Disable simulated crashes */
 #define PMAT_CRASH_DISABLE() \

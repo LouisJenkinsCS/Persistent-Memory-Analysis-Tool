@@ -122,8 +122,13 @@ static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
 
+// Comparator for finding a file associated with a name
+static Int find_file_by_name(const struct pmat_registered_file *lhs, const struct pmat_registered_file *rhs) {
+    return VG_(strcmp)(lhs->name, rhs->name);
+}
+
 // Comparator for finding a file associated with an address
-static Bool find_file_by_addr(const struct pmat_registered_file *lhs, const struct pmat_registered_file *rhs) {
+static Int find_file_by_addr(const struct pmat_registered_file *lhs, const struct pmat_registered_file *rhs) {
     if (rhs->size == 0) {
         // LHS should have a non-zero size...
         tl_assert2(lhs->size, "LHS(addr:0x%lx) has size of 0...", lhs->addr);
@@ -1506,6 +1511,8 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_WRITE_STATS != arg[0]
             && VG_USERREQ__GDB_MONITOR_COMMAND != arg[0]
             && VG_USERREQ__PMC_PMAT_REGISTER != arg[0]
+            && VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR != arg[0]
+            && VG_USERREQ__PMC_PMAT_UNREGISTER_BY_NAME != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_ENABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_DISABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_TRANSIENT != arg[0]
@@ -1585,6 +1592,32 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR: {
+            if (VG_(OSetGen_Size)(pmem.pmat_registered_files) > 0) {           
+                struct pmat_registered_file file = {0};
+                file.addr = arg[1];
+                struct pmat_registered_file *found = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+                if (!found) {
+                    break;
+                }
+                VG_(OSetGen_Remove)(pmem.pmat_registered_files, found);
+                VG_(OSetGen_FreeNode)(pmem.pmat_registered_files, found);
+            }
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_UNREGISTER_BY_NAME: {
+            if (VG_(OSetGen_Size)(pmem.pmat_registered_files) > 0) {           
+                struct pmat_registered_file file = {0};
+                file.name = arg[1];
+                struct pmat_registered_file *found = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_name);
+                if (!found) {
+                    break;
+                }
+                VG_(OSetGen_Remove)(pmem.pmat_registered_files, found);
+                VG_(OSetGen_FreeNode)(pmem.pmat_registered_files, found);
+            }
             break;
         }
         case VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH: {

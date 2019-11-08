@@ -140,6 +140,7 @@ int main(int argc, char *argv[]) {
 	do_benchmark(dq, seconds);
 	PMAT_CRASH_DISABLE();
     DurableQueue_destroy(dq);
+	PMAT_UNREGISTER_BY_ADDR(heap);
 	free(heap);
 	return 0;
 }
