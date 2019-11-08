@@ -46,7 +46,7 @@
 #include <assert.h>
 
 #define FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr));
-#define MAX_NODES (1024 * 1024)
+#define MAX_NODES (1024)
 #define SIZE (sizeof(struct list_root))
 #define NODE_PTR(root, node_id) \
 	(node_id == 0 ? NULL : &(root)->nodes[(node_id)])

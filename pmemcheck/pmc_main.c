@@ -1508,6 +1508,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
     wblookup.entry = entry;
     struct pmat_write_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
     if (exist) {
+        /*
         exist->tid = tid;
         // Merge our cache line...
         exist->entry->dirtyBits |= entry->dirtyBits;
@@ -1519,6 +1520,11 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         }
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, entry);
         return;
+        */
+       write_to_file(exist);
+       VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
+       VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
+       VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
     }
 
     // Store Buffer
@@ -1619,7 +1625,7 @@ add_flush_event(IRSB *sb, IRAtom *daddr, Bool isFence)
         addStmtToIRSB(sb, IRStmt_Dirty(di));
     } else {
         const HChar *helperName = "trace_pmem_flush_fence";
-        void *helperAddr = trace_pmem_flush;
+        void *helperAddr = trace_pmem_flush_fence;
         IRExpr **argv;
         IRDirty *di;
 
