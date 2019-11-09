@@ -346,6 +346,17 @@ void VG_(client_cmd_and_args)(HChar *buffer, SizeT buf_size)
    Various important syscall wrappers
    ------------------------------------------------------------------ */
 
+Int VG_(clock_gettime)(vki_clockid_t clk_id, struct vki_timespec *tp) {
+#  if defined(VGO_linux) && defined(HAVE_CLOCK_GETTIME)
+   SysRes res = VG_(do_syscall2)(__NR_clock_gettime, clk_id, tp);
+   if (sr_isError(res))
+      return -1;
+   return 0;
+#else 
+   #error "Need Linux + `clock_gettime`"
+#endif
+}
+
 Int VG_(waitpid)(Int pid, Int *status, Int options)
 {
 #  if defined(VGO_linux)

@@ -35,12 +35,7 @@
 #include "pub_tool_debuginfo.h"
 #include "pmemcheck.h"
 #include "pmc_include.h"
-
-#ifdef VG_(VGO_linux)
-#include "vki-linux.h"
-#else
-#error "Linux required!"
-#endif
+#include "pub_tool_vki.h"
 
 /* track at max this many multiple overwrites */
 #define MAX_MULT_OVERWRITES 10000UL
@@ -144,16 +139,16 @@ static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
 
 // Update statistics for nanoseconds per verification call
-static void update_stats(Double ns) {
-    Double delta1 = ns - pmem.pmat_mean_verification_time;
-    pmem.pmat_mean_verification_time += delta1 / pmem.pmat_num_verifications;
-    Double delta2 = ns - pmem.pmat_mean_verification_time;
+static void update_stats(Double sec) {
+    Double delta1 = sec - pmem.pmat_mean_verification_time;
+    pmem.pmat_mean_verification_time += delta1 / ((Double) pmem.pmat_num_verifications);
+    Double delta2 = sec - (Double) pmem.pmat_mean_verification_time;
     pmem.pmat_ssd_verification_time += delta1 * delta2;
 }
 
 static void get_stats(Double *mean, Double *variance) {
     *mean = pmem.pmat_mean_verification_time;
-    *variance = pmem.pmat_ssd_verification_time / pmem.pmat_num_verifications;
+    *variance = pmem.pmat_ssd_verification_time / (Double) pmem.pmat_num_verifications;
 }
 
 // Comparator for finding a file associated with a name
@@ -558,6 +553,20 @@ static void stringify_stack_trace(ExeContext *context) {
     VG_(apply_StackTrace)(stringify_stack_trace_helper, &stackTraceStr, ep, ips, n_ips);
 }
 
+// Returns seconds difference
+static Double diff(struct vki_timespec start, struct vki_timespec end)
+{
+    struct vki_timespec temp;
+    if ((end.tv_nsec-start.tv_nsec)<0) {
+        temp.tv_sec = end.tv_sec-start.tv_sec-1;
+        temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+    } else {
+        temp.tv_sec = end.tv_sec-start.tv_sec;
+        temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+    }
+    return (Double) (temp.tv_sec + ((Double) temp.tv_nsec) / 1000000000.0);
+}
+
 // TODO: Need to write stderr and stdout to their own temporary files; these files persist if recovery fails!
 // TODO: Need to set timeout for recovery operations, in case they do an infinite loop. Parent currently gets stuck in a syscall!
 static void simulate_crash(void) {
@@ -571,13 +580,22 @@ static void simulate_crash(void) {
     // Make copy of tests first...
     Int pid = VG_(fork)();
     if (pid != 0) {
-        vki_timer_t timer;
+        struct vki_timespec start;
+        struct vki_timespec end;
+        tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &start) == 0, "Failed to get start time!");
         // Parent...
         Int retval;
         Int retpid = VG_(waitpid)(pid, &retval, 0);
+        tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &end) == 0, "Failed to get end time!");
         tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
 
         pmem.pmat_num_verifications++;
+        Double sec = diff(start, end);
+        update_stats(sec);
+        pmem.pmat_max_verification_time = VG_MAX(pmem.pmat_max_verification_time, sec);
+        pmem.pmat_min_verification_time = VG_MIN(pmem.pmat_min_verification_time, sec);
+        if (pmem.pmat_min_verification_time == 0) pmem.pmat_min_verification_time = sec;
+
         // Check if child exited normally...
         if (VKI_WIFEXITED(retval)) {
             Int status = VKI_WEXITSTATUS(retval);
@@ -1732,9 +1750,12 @@ pmc_process_cmd_line_option(const HChar *arg)
 static void
 pmc_post_clo_init(void)
 {
-    VG_(memset)(&pmem, 0, sizeof(pmem));
     pmem.pmat_num_verifications = 0;
     pmem.pmat_num_bad_verifications = 0;
+    pmem.pmat_min_verification_time = 0;
+    pmem.pmat_max_verification_time = 0;
+    pmem.pmat_ssd_verification_time = 0;
+    pmem.pmat_average_verification_time = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmc.main.cpci.0", VG_(free), 
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_write_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmc.main.cpci.-2", VG_(free),
@@ -1768,6 +1789,33 @@ pmc_print_debug_usage(void)
     );
 }
 
+static double sqrt(double number)
+{
+    double error = 0.00001; //define the precision of your result
+    double s = number;
+
+    while ((s - number / s) > error) //loop until precision satisfied 
+    {
+        s = (s + number / s) / 2;
+    }
+    return s;
+}
+
+static void scientificNotation(Double d, Double *norm, Word *exp) {
+    *norm = d;
+    *exp = 0;
+    if (*norm) {
+        while (*norm >= 10.0) {
+            *norm /= 10.0;
+            exp[0]++;
+        }
+        while (*norm < 1.0) {
+            *norm *= 10.0;
+            exp[0]--;
+        }
+    }
+}
+
 /**
  * \brief Function called on program exit.
  */
@@ -1775,6 +1823,23 @@ static void
 pmc_fini(Int exitcode)
 {
     print_store_stats();
+    if (pmem.pmat_num_verifications) {
+        Double mean, var, mins, maxs, stds;
+        Word mean_norm, var_norm, mins_norm, maxs_norm, stds_norm;
+        get_stats(&mean, &var);
+        mins = pmem.pmat_min_verification_time;
+        maxs = pmem.pmat_max_verification_time;
+        stds = sqrt(var);
+        scientificNotation(mean, &mean, &mean_norm);
+        scientificNotation(var, &var, &var_norm);
+        scientificNotation(mins, &mins, &mins_norm);
+        scientificNotation(maxs, &maxs, &maxs_norm);
+        scientificNotation(stds, &stds, &stds_norm);
+        
+        VG_(emit)("Verification Function Stats (nanoseconds):\n\tMinimum:%lf%s%d\n\tMaximum:%lf%s%d\n\tMean:%lf%s%d\n\tStd:%lf%s%d\n\tVariance:%lf%s%d\n",
+            mins, mins_norm ? "e" : "", mins_norm, maxs, maxs_norm ? "e" : "", maxs_norm, mean, mean_norm ? "e" : "", mean_norm, stds, stds_norm ? "e" : "", 
+            stds_norm, var, var_norm ? "e" : "", var_norm);
+    }
 }
 
 /**
