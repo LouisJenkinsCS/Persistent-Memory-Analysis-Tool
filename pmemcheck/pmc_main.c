@@ -134,6 +134,7 @@ typedef struct {
 /** Number of sblock run. */
 static ULong sblocks = 0;
 
+static void stringify_stack_trace(ExeContext *context, int fd);
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
@@ -466,6 +467,72 @@ cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs) {
 
 typedef void (*split_clb)(struct pmem_st *store,  OSet *set, Bool preallocated);
 
+static char *dump_to_file(int fd) {
+    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    HChar charbuf[256];
+    VG_(snprintf)(charbuf, 256, "Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)(pmem.pmat_cache_entries));
+    VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+
+    // To prevent having to print out ExeContext for cache lines with the same stack
+    // trace, we instead create mappings from stack traces to cache lines.
+    OSet *unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
+    struct pmat_cache_entry *entry;
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &entry->lastPendingStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
+        *node = entry->lastPendingStore;
+        VG_(OSetGen_Insert)(unique_cache_lines, node);
+        struct pmat_registered_file file = {0};
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+        if (!realFile) {
+            VG_(emit)("Could not find descriptor for 0x%lx\n", file.addr);
+            VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+            struct pmat_registered_file *tmp;
+            while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+                VG_(emit)("File Found: (%lx, 0x%lx, 0x%lx)\n", tmp->descr, tmp->addr, tmp->size);
+            }
+        }
+        tl_assert(realFile);
+
+
+        VG_(snprintf)(charbuf, 256, "['%s']\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        stringify_stack_trace(entry->lastPendingStore, fd);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    }
+
+    VG_(OSetGen_Destroy)(unique_cache_lines);
+    unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
+
+    VG_(snprintf)(charbuf, 256, "Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
+    VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    struct pmat_write_buffer_entry *wbentry = NULL;
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->lastPendingStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
+        *node = wbentry->entry->lastPendingStore;
+        VG_(OSetGen_Insert)(unique_cache_lines, node);
+        struct pmat_cache_entry *entry = wbentry->entry;
+        struct pmat_registered_file file = {0};
+        file.addr = entry->addr;
+        struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
+        tl_assert(realFile);
+        VG_(snprintf)(charbuf, 256, "['%s']\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        stringify_stack_trace(entry->lastPendingStore, fd);
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n", realFile->name);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    }
+}
+
 static void dump(void) {
     VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
             (pmem.pmat_cache_entries));
@@ -499,11 +566,16 @@ static void dump(void) {
     }
 
     VG_(OSetGen_Destroy)(unique_cache_lines);
+    unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
     VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
     struct pmat_write_buffer_entry *wbentry = NULL;
     while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->lastPendingStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
+        *node = wbentry->entry->lastPendingStore;
+        VG_(OSetGen_Insert)(unique_cache_lines, node);
         struct pmat_cache_entry *entry = wbentry->entry;
         struct pmat_registered_file file = {0};
         file.addr = entry->addr;
@@ -540,17 +612,28 @@ static void copy_files(char *suffix) {
     }
 }
 
-static void stringify_stack_trace_helper(UInt n, DiEpoch ep, Addr ip, void *strPtr) {
-    // TODO
+static void stringify_stack_trace_helper(UInt n, DiEpoch ep, Addr ip, void *fdptr) {
+    int fd = *(int *)fdptr;
+    char charbuf[256];
+    InlIPCursor *iipc = VG_(new_IIPC)(ep, ip);
+
+   do {
+        const HChar *buf = VG_(describe_IP)(ep, ip, iipc);
+        VG_(snprintf)(charbuf, 256, "   %s %s\n", (n == 0 ? "at" : "by"), buf);
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        n++; 
+      // Increase n to show "at" for only one level.
+   } while (VG_(next_IIPC)(iipc));
+   VG_(delete_IIPC)(iipc);
 }
 
-static void stringify_stack_trace(ExeContext *context) {
+static void stringify_stack_trace(ExeContext *context, int fd) {
     UInt n_ips;
     DiEpoch ep = VG_(get_ExeContext_epoch)(context);
     Addr *ips = VG_(make_StackTrace_from_ExeContext)(context, &n_ips);
 
-    char *stackTraceStr;
-    VG_(apply_StackTrace)(stringify_stack_trace_helper, &stackTraceStr, ep, ips, n_ips);
+    int argfd = fd;
+    VG_(apply_StackTrace)(stringify_stack_trace_helper, &argfd, ep, ips, n_ips);
 }
 
 // Returns seconds difference
@@ -601,18 +684,24 @@ static void simulate_crash(void) {
             Int status = VKI_WEXITSTATUS(retval);
             if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
                 pmem.pmat_num_bad_verifications++;
-                dump();
                 copy_files("bad");
             } else if (status == 0) {
-                // NOP: Might want to save '.good' files as an option later...
+                // Delete files created by child...
+                char dump_file[64];
+                char stderr_file[64];
+                char stdout_file[64];
+                VG_(snprintf)(dump_file, 64, "bad-verification-%d.dump", pmem.pmat_num_verifications);
+                VG_(snprintf)(stderr_file, 64, "bad-verification-%d.stderr", pmem.pmat_num_verifications);
+                VG_(snprintf)(stdout_file, 64, "bad-verification-%d.stdout", pmem.pmat_num_verifications);
+                VG_(unlink)(dump_file);
+                VG_(unlink)(stderr_file);
+                VG_(unlink)(stdout_file);
             } else {
                 pmem.pmat_num_bad_verifications++;
-                dump();
                 copy_files("bad");
             }
         } else if (VKI_WIFSIGNALED(retval)) {
             pmem.pmat_num_bad_verifications++;
-            dump();
             copy_files("bad.coredump");
         } else {
             pmem.pmat_num_bad_verifications++;
@@ -622,6 +711,34 @@ static void simulate_crash(void) {
     } else {
         // Child...
         int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);
+        // Redirect to a file...
+        char dump_file[64];
+        char stderr_file[64];
+        char stdout_file[64];
+        VG_(snprintf)(dump_file, 64, "bad-verification-%d.dump", pmem.pmat_num_verifications+1);
+        VG_(snprintf)(stderr_file, 64, "bad-verification-%d.stderr", pmem.pmat_num_verifications+1);
+        VG_(snprintf)(stdout_file, 64, "bad-verification-%d.stdout", pmem.pmat_num_verifications+1);
+        SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        if (sr_isError(res)) {
+            VG_(emit)("Could not open file '%s'; errno: %d\n", dump_file, sr_Err(res));
+            tl_assert(0);
+        }
+        dump_to_file(sr_Res(res));
+        VG_(close)(sr_Res(res));
+        res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        if (sr_isError(res)) {
+            VG_(emit)("Could not open file '%s'; errno: %d\n", stderr_file, sr_Err(res));
+            tl_assert(0);
+        }
+        VG_(close)(2);
+        VG_(dup2)(2, sr_Res(res));
+        res = VG_(open)(stdout_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        if (sr_isError(res)) {
+            VG_(emit)("Could not open file '%s'; errno: %d\n", stdout_file, sr_Err(res));
+            tl_assert(0);
+        }
+        VG_(close)(1);
+        VG_(dup2)(1, sr_Res(res));
         char *args[numFiles + 3]; 
         args[0] = pmem.pmat_verifier;
         char numFilesStr[3];
@@ -1792,7 +1909,7 @@ pmc_print_debug_usage(void)
     );
 }
 
-static double sqrt(double number)
+static Double sqrt(Double number)
 {
     double error = 0.00001; //define the precision of your result
     double s = number;
@@ -1839,9 +1956,8 @@ pmc_fini(Int exitcode)
         scientificNotation(maxs, &maxs, &maxs_norm);
         scientificNotation(stds, &stds, &stds_norm);
         
-        VG_(emit)("Verification Function Stats (seconds):\n\tMinimum:%lf%s%d\n\tMaximum:%lf%s%d\n\tMean:%lf%s%d\n\tStd:%lf%s%d\n\tVariance:%lf%s%d\n",
-            mins, mins_norm ? "e" : "", mins_norm, maxs, maxs_norm ? "e" : "", maxs_norm, mean, mean_norm ? "e" : "", mean_norm, stds, stds_norm ? "e" : "", 
-            stds_norm, var, var_norm ? "e" : "", var_norm);
+        VG_(emit)("Verification Function Stats (seconds):\n\tMinimum:%lf%s%d\n\tMaximum:%lf%s%d\n\tMean:%lf%s%d\n\tVariance:%lf%s%d\n",
+            mins, mins_norm ? "e" : "", mins_norm, maxs, maxs_norm ? "e" : "", maxs_norm, mean, mean_norm ? "e" : "", mean_norm, var, var_norm ? "e" : "", var_norm);
     }
 }
 

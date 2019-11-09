@@ -12,4 +12,4 @@ all: $(PROGS)
 
 .PHONY: clean
 clean:
-	-rm -f $(EXECS) $(PROGS) $(BINS)
+	-rm -f $(EXECS) $(PROGS) $(BINS) *.stderr *.stdout *.dump
