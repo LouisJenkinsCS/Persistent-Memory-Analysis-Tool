@@ -15,7 +15,7 @@
 #include <time.h>
 
 // Size is N + 1 as we need space for the sentinel node
-#define N (1024)
+#define N (1024 * 1024)
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 // Sanity Check to determine whether or not the queue is working...
@@ -56,11 +56,13 @@ static void check_queue(struct DurableQueue *dq) {
 	//DurableQueue_gc(dq);
 }
 
+// Note: This performs randomized enqueue/dequeue operations in lock-step due to the stop-the-world approach
+// to memory reclamation we use.
 static void do_benchmark(struct DurableQueue *dq, int seconds) {
 	srand(0);
 	time_t start;
 	time(&start);
-	atomic_bool done = false;
+	atomic_int status = 1; 
 	size_t numOperations = 0;
 
 	#pragma omp parallel reduction(+: numOperations)
@@ -71,7 +73,31 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		uint64_t iterations = 0;
 		DurableQueue_register(dq);
 
-		while (!done) {
+		while (status != -1) {
+			#pragma master
+			{
+				time(&end);
+				int time_taken = end - start;
+
+				if (time_taken >= seconds) {
+					status = -1;
+					continue;
+				}
+			}
+
+			#pragma omp barrier
+			if (status == 0) {
+				#pragma barrier
+				#pragma master
+				{
+					DurableQueue_gc(dq);
+					status = 1;
+				} 
+				#pragma omp barrier // Hit next barrier so all threads leave barrier
+			} else if (status == -1) {
+				break;
+			}
+
 			numOperations++;
 			int rng = rand();
 			if (rng % 2 == 0) {
@@ -83,32 +109,14 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 				int retval = DurableQueue_dequeue(dq, omp_get_thread_num());
 				if (retval == DQ_EMPTY) {
 					bool success = DurableQueue_enqueue(dq, rng);
-					// If this fails too, we ran out of memory, do a full GC...
-					// We wait for the master as only they can handle stop-the-world GC
-					#pragma omp barrier
 
-					#pragma omp master
-					{
-						if (!success) {
-							DurableQueue_gc(dq);
-						}
-						time(&end);
-						int time_taken = end - start;
-
-						if (time_taken >= seconds) {
-							done = true;
-						}
-					}
-
-					#pragma omp barrier
-				
+					if (!success) {
+						status = -1;
+					}	
 				}
 			}
 		}
 		printf("Thread %d performed %lu operations\n", omp_get_thread_num(), numOperations);
-
-		#pragma omp master
-		DurableQueue_gc(dq);
 
 		DurableQueue_unregister(dq);
 	}
@@ -132,7 +140,7 @@ int main(int argc, char *argv[]) {
 	void *heap;
 	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, SIZE) == 0);
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
-    struct DurableQueue *dq = DurableQueue_create(heap, SIZE);	
+    struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
 	printf("Sanity checking queue...\n");
 	check_queue(dq);
 	printf("Sanity check complete, beginning benchmark for %d seconds...\n", seconds);

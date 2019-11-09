@@ -717,6 +717,7 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
                 entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
                 do_writeback(entry);
             }
+            VG_(deleteXA)(arr);
         }
     }
     maybe_simulate_crash();
@@ -1054,6 +1055,7 @@ _do_fence(void)
         VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
     }
+    VG_(deleteXA)(arr);
 }
 
 /**
@@ -1135,6 +1137,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
             VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
         }
+        VG_(deleteXA)(arr);
     }
 }
 
@@ -1836,7 +1839,7 @@ pmc_fini(Int exitcode)
         scientificNotation(maxs, &maxs, &maxs_norm);
         scientificNotation(stds, &stds, &stds_norm);
         
-        VG_(emit)("Verification Function Stats (nanoseconds):\n\tMinimum:%lf%s%d\n\tMaximum:%lf%s%d\n\tMean:%lf%s%d\n\tStd:%lf%s%d\n\tVariance:%lf%s%d\n",
+        VG_(emit)("Verification Function Stats (seconds):\n\tMinimum:%lf%s%d\n\tMaximum:%lf%s%d\n\tMean:%lf%s%d\n\tStd:%lf%s%d\n\tVariance:%lf%s%d\n",
             mins, mins_norm ? "e" : "", mins_norm, maxs, maxs_norm ? "e" : "", maxs_norm, mean, mean_norm ? "e" : "", mean_norm, stds, stds_norm ? "e" : "", 
             stds_norm, var, var_norm ? "e" : "", var_norm);
     }

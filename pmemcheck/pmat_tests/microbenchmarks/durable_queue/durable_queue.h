@@ -28,9 +28,10 @@ PERSISTENT struct DurableQueueNode {
 };
 
 PERSISTENT struct DurableQueue {
+    long padding;
     // metadata[0] = numEnqueues
     // metadata[1] = numDequeues
-    // metadata[2-7] = padding... should be all 0's
+    // metadata[2-6] = padding... should be all 0's
     atomic_long metadata[8];
     atomic_uintptr_t head;
     atomic_uintptr_t tail;

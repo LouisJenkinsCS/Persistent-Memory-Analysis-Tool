@@ -191,8 +191,8 @@ bool DurableQueue_verify(void *heap, size_t sz) {
 		return false;
 	}
 
-	if (actualNodesFound < expectedNodesFound) {
-		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld!\n", actualNodesFound, expectedNodesFound);
+	if (actualNodesFound < expectedNodesFound - MAX_THREADS) {
+		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, numEnqueue, numDequeue);
 		return false;
 	}
 	return true;
