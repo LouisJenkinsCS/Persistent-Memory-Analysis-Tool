@@ -1,4 +1,4 @@
 language: minimal
 sudo: required
 
-script: ./autogen.sh && ./configure && sudo make install -j4 && cd pmemcheck/pmat_tests && ./build.sh && valgrind --tool=pmemcheck ./a.out
+script: ./autogen.sh && ./configure && sudo make install -j4 && cd pmemcheck/pmat_tests && make && valgrind --tool=pmemcheck --pmat-verifier=in-order-store_verifier ./in-order-store && valgrind --tool=pmemcheck --pmat-verifier=in-order-store_verifier ./out-of-order-store && valgrind --tool=pmemcheck --pmat-verifier=openmp_test_verifier ./openmp_test && cd microbenchmarks/durable_queue && valgrind --tool=pmemcheck --pmat-verifier=durable_queue_verifier ./durable_queue 5 && cd ../linked_list && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list g 1024 && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list b 1024
