@@ -51,10 +51,10 @@ The plan is that the binary files mentioned above are used to run recovery on.
 The `binaryName` mentioned above is the prefix to identify which shadow heap
 is which, and has the suffix of '[good|bad].\d+', I.E a binaryName of 'dummy.bin'
 that passed verification would have 'dummy.bin.good.10' if it successfully passes
-the verifier provided and is the 10th verification that is run. Associated with an 'bad'
-shadow heap is the `stderr`, `stdout`, and a trace of the leaked cache lines and cache lines
+the verifier provided and is the 10th verification that is run. Associated with a 'bad'
+shadow heap is the `stderr`, `stdout`, and a trace of the leaked cache lines and cache lines (`dump`)
 that were flushed but not fenced in the application, which is provided in the hopes that it will
-aid in fixing bugs in the application.
+aid in fixing bugs in the application; this has a fixed prefix `bad-verification-\d+`.
 
 As well, statistical information such as the mean, minimum, maximum, and variance of times for running the verifier
 is provided. This can provide some way to measure how expensive recovery/verification is, and may help when it comes to
