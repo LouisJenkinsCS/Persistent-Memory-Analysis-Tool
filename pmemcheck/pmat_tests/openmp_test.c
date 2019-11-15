@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <libpmem.h>
 #include <assert.h>
 #include <valgrind/pmemcheck.h>
 
