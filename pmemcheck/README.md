@@ -56,6 +56,22 @@ shadow heap is the `stderr`, `stdout`, and a trace of the leaked cache lines and
 that were flushed but not fenced in the application, which is provided in the hopes that it will
 aid in fixing bugs in the application.
 
+As well, statistical information such as the mean, minimum, maximum, and variance of times for running the verifier
+is provided. This can provide some way to measure how expensive recovery/verification is, and may help when it comes to
+tuning how fast and efficient is is, which is especially important when testing. For example...
+
+```
+==15631== 47 out of 656 verifications failed...
+==15631== Verification Function Stats (seconds):
+==15631==       Minimum:1.583812e-3
+==15631==       Maximum:8.641710e-2
+==15631==       Mean:3.345374e-3
+==15631==       Variance:2.132564e-5
+```
+
+"Why is verification/recovery so slow? Why is testing taking so long?" - The above answers that question by showing that as
+time goes on, the average time of verification increases as the complexity of the underlying heap increases; that is, the more data there is to check, the longer it takes. Can this be optimized more? Maybe; this up to the user to decide whether or not it is worth it or not.
+
 
 **PMAT Library Includes**
 
