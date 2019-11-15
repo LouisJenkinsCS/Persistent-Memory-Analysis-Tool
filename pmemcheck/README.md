@@ -4,13 +4,24 @@ Right now, the interface is still in flux, so some of this is likely to change b
 
 ```c
 PMAT_REGISTER(binaryName, addr, size);
+PMAT_UNREGISTER_BY_NAME(binaryName);
+PMAT_UNREGISTER_BY_ADDR(addr);
 ```
 
 The 'binaryName' is the name of the file used for the 'shadow' heap , and needs to be unique for
 each heap. This file name is how you distinguish which shadow heap is which during verification
 and recovery. The 'addr' is a 64-byte aligned (_NEEDS_ to be 64-byte aligned right now, or else
 PMAT will reject it when you try registering it!) pointer, and 'size' is the size of persistent
-Memory region.
+Memory region. Make sure to unregister before freeing the memory!
+
+To mark a particular portion of a persistent memory region as transient, which is useful when you,
+say have a field in a `struct` that you do not care about the persistence of and do not want this to
+show up when trying to debug leaked and unfenced cache lines, you can use the following macro. Marking
+something transient will result in the value never being updated in the shadow heap.
+
+```c
+PMAT_TRANSIENT(addr, sz);
+```
 
 **Automatic Crash Simulation**
 
@@ -40,48 +51,27 @@ The plan is that the binary files mentioned above are used to run recovery on.
 The `binaryName` mentioned above is the prefix to identify which shadow heap
 is which, and has the suffix of '[good|bad].\d+', I.E a binaryName of 'dummy.bin'
 that passed verification would have 'dummy.bin.good.10' if it successfully passes
-the verifier provided and is the 10th verification that is run. In the near future
-it will also provide a file for the redirected stderr and stdout, as well as the diagnostic
-information such as leaked cache lines and flushes that were leaked due to not being fenced
-similar to what is shown on program exit.
+the verifier provided and is the 10th verification that is run. Associated with a 'bad'
+shadow heap is the `stderr`, `stdout`, and a trace of the leaked cache lines and cache lines (`dump`)
+that were flushed but not fenced in the application, which is provided in the hopes that it will
+aid in fixing bugs in the application; this has a fixed prefix `bad-verification-\d+`.
 
-**But what about recovery?**
+As well, statistical information such as the mean, minimum, maximum, and variance of times for running the verifier
+is provided. This can provide some way to measure how expensive recovery/verification is, and may help when it comes to
+tuning how fast and efficient is is, which is especially important when testing. For example...
 
-PMAT will produce a complete binary file, that is used in verification; this binary
-function can be directly used to recover on. The way to look at it is like this:
-A single program history will contain multiple sub-histories that represent what would
-happen if a crash occurred at that point in time; see this as your first pass.
-In your second pass, you take each of those sub-histories, and if you they have _all_ been
-verified to pass your 'smoke test' (which is a software engineering term for a test that is run
-to determine whether or not further testing should be done), you can then run PMAT again
-on the application with logic used specifically for recovery. If it is desired, you can go even
-further by performing more tests on the new sub-history created by the 'recovered' application.
-Recovery could be as simple as copying the file binary directly into some persistent region
-prior to starting the application. See it as a breadth-first approach to handling verification and
-recovery; you begin with an empty state and create sub-histories A, B, and C; if A, B, and C
-are all verified  to be correct, run the application on A which produces more sub-histories,
-and so on; see below for an example of how a script could be composed.
-
-```bash
-# Pass 1
-valgrind --tool=pmemcheck --pmat-verifier=verifier ./application
-# Verify that all binaries are 'good'...
-# Maybe do something to move original files so that new runs don't overwrite...
-
-# Pass 2
-for bin in application.bin.*; do
-   # Do something so that application runs on state in `bin`...
-   valgrind --tool=pmemcheck --pmat-verifier=verifier ./application
-done
+```
+==15631== 47 out of 656 verifications failed...
+==15631== Verification Function Stats (seconds):
+==15631==       Minimum:1.583812e-3
+==15631==       Maximum:8.641710e-2
+==15631==       Mean:3.345374e-3
+==15631==       Variance:2.132564e-5
 ```
 
-(I do intend to provide a complete example of how recovery can be done via a script
-by the end of the month; I really want to use the persistent queue benchmark as a real-world
-and _self-contained_ example)
+"Why is verification/recovery so slow? Why is testing taking so long?" - The above answers that question by showing that as
+time goes on, the average time of verification increases as the complexity of the underlying heap increases; that is, the more data there is to check, the longer it takes. Can this be optimized more? Maybe; this up to the user to decide whether or not it is worth it or not.
 
-Side Note; Due to Valgrind's thread serialization; it might be okay to run this second pass in
-parallel due to only one thread running at any given time, while being constrained by the
-memory required to run each instance.
 
 **PMAT Library Includes**
 
