@@ -4,7 +4,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include <libpmem.h>
 #include <valgrind/pmemcheck.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
