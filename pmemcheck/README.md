@@ -4,15 +4,15 @@ Right now, the interface is still in flux, so some of this is likely to change b
 
 ```c
 PMAT_REGISTER(binaryName, addr, size);
-PMAT_UNREGISTER_NAME(binaryName);
-PMAT_UNREGISTER_ADDR(addr);
+PMAT_UNREGISTER_BY_NAME(binaryName);
+PMAT_UNREGISTER_BY_ADDR(addr);
 ```
 
 The 'binaryName' is the name of the file used for the 'shadow' heap , and needs to be unique for
 each heap. This file name is how you distinguish which shadow heap is which during verification
 and recovery. The 'addr' is a 64-byte aligned (_NEEDS_ to be 64-byte aligned right now, or else
 PMAT will reject it when you try registering it!) pointer, and 'size' is the size of persistent
-Memory region.
+Memory region. Make sure to unregister before freeing the memory!
 
 To mark a particular portion of a persistent memory region as transient, which is useful when you,
 say have a field in a `struct` that you do not care about the persistence of and do not want this to
