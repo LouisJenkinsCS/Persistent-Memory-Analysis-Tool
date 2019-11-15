@@ -46,7 +46,6 @@ testing it would be ideal to have both automatic crash and strategic calls.
 valgrind --tool=pmemcheck --pmat-verifier=verifier ./application
 ```
 
-It should be emphasized that PMAT runs _verification_, and _not_ recovery!
 The plan is that the binary files mentioned above are used to run recovery on.
 The `binaryName` mentioned above is the prefix to identify which shadow heap
 is which, and has the suffix of '[good|bad].\d+', I.E a binaryName of 'dummy.bin'
