@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fopenmp -lqsbr -ggdb3 -O0 -std=gnu11 -I/usr/local/include/ -L/usr/local/lib #-fsanitize=address
+CFLAGS=-fopenmp -ggdb3 -O0 -std=gnu11 -I/usr/local/include/ -L/usr/local/lib #-fsanitize=address
 SRC=durable_queue.c durable_queue_test.c
 OBJ=$(SRC:.c=.o)
 EXEC=durable_queue
