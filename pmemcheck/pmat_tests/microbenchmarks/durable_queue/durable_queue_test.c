@@ -79,7 +79,6 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 
 				if (time_taken >= seconds) {
 					status = -1;
-					continue;
 				}
 			}
 
