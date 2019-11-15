@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <libpmem.h>
 #include <valgrind/pmemcheck.h>
 #include <assert.h>
 #include <sys/mman.h>
