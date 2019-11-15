@@ -17,4 +17,4 @@ $(EXEC):$(OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf durable_queue_verifier.o $(VERIFIER) $(EXEC) $(OBJ) *.bin*
+	rm -rf durable_queue_verifier.o $(VERIFIER) $(EXEC) $(OBJ) *.bin* *.stderr* *.dump* *.stdout*

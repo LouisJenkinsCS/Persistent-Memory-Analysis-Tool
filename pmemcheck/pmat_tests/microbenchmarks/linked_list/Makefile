@@ -19,4 +19,4 @@ $(TEST_EXEC):$(TEST_OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(VERF_EXEC) $(TEST_EXEC) $(VERF_OBJ) $(TEST_OBJ) *.bin*
+	rm -rf $(VERF_EXEC) $(TEST_EXEC) $(VERF_OBJ) $(TEST_OBJ) *.bin* *.dump* *.stderr* *.stdout*

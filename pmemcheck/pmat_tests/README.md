@@ -26,3 +26,11 @@ it can be used to determine 'at-a-glance' that the state of the shadow heap is c
 but closer inspection should be made, I.E via a hex editor, or even by recovering directly
 from the heap (I.E by using `mmap` or copying the heap into persistent memory before beginning
 your application).
+
+## Test Combination
+
+```
+valgrind --tool=pmemcheck --pmat-verifier=in-order-store_verifier ./in-order-store
+valgrind --tool=pmemcheck --pmat-verifier=in-order-store_verifier ./out-of-order-store
+valgrind --tool=pmemcheck --pmat-verifier=openmp_test_verifier ./openmp_test
+```
