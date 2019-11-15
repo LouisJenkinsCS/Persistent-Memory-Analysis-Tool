@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fopenmp -ggdb3 -lqsbr -O3 -std=gnu11 -I/usr/include/qsbr/
+CFLAGS=-fopenmp -ggdb3 -O3 -std=gnu11 -I/usr/include/qsbr/
 CFILES:=$(shell ls | grep .c)	
 SRCS = $(wildcard *.c)
 PROGS = $(patsubst %.c,%,$(SRCS))
