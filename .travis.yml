@@ -18,6 +18,6 @@ script: ./autogen.sh
       && make clean
       && cd ../linked_list
       && make
-      && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list g $((1024 * 1024))
-      && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list b $((1024 * 1024))
+      && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list g $((64 * 1024))
+      && valgrind --tool=pmemcheck --pmat-verifier=linked_list_verifier ./linked_list b $((64 * 1024))
       && make clean
