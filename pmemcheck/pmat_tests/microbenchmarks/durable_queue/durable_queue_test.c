@@ -108,7 +108,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					bool success = DurableQueue_enqueue(dq, rng);
 
 					if (!success) {
-						status = -1;
+						status = 0;
 					}	
 				}
 			}
