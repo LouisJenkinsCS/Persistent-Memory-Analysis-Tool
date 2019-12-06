@@ -1764,6 +1764,10 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             file->descr = sr_Res(res);
             VG_(ftruncate)(file->descr, file->size);
             tl_assert(file->descr != (UWord) -1);
+
+            // Copy over in-memory contents into shadow-heap. Since we know
+            // that we have thread serialization thanks to Valgrind, we know
+            // that the heap cannot be modified while we are making this copy.
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
             break;
         }
