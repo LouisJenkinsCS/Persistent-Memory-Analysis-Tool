@@ -588,27 +588,39 @@ static void dump(void) {
     }
 }
 
+static Bool exec(const char *cmd, char **args) {
+    Int pid = VG_(fork)();
+    if (pid == 0) {
+        // Child
+        Int retval = VG_(execv)(cmd, args); 
+        if (retval) {
+            //VG_(emit)("Child returned with (%d:%d) (%d:%d) %d\n", VKI_WIFEXITED(retval), VKI_WEXITSTATUS(retval), VKI_WIFSIGNALED(retval), VKI_WTERMSIG(retval), VKI_WCOREDUMP(retval));
+            VG_(exit)(-1);
+        }
+    } else {
+        Int retval;
+        Int retpid = VG_(waitpid)(pid, &retval, 0);
+        return VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0;
+    }
+}
+
+static Bool copy_file(const char *f1, const char *f2) {
+    char *args[5];
+    args[0] = "cp";
+    args[1] = f1;
+    args[2] = f2;
+    args[3] = "--reflink=auto";
+    args[4] = NULL;
+    exec("/bin/cp", args);
+}
+
 static void copy_files(char *suffix) {
     VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
     struct pmat_registered_file *tmp;
     while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
         char file_name[1024];
         VG_(snprintf)(file_name, 1024, "%s.%d.%s", tmp->name, pmem.pmat_num_verifications, suffix);
-        SysRes res = VG_(open)(file_name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
-        if (sr_isError(res)) {
-            VG_(emit)("Could not open file '%s'; errno: %d\n", file_name, sr_Err(res));
-            tl_assert(0);
-        }
-        int fd = sr_Res(res);
-        VG_(lseek)(tmp->descr, 0, VKI_SEEK_SET);
-        VG_(lseek)(fd, 0, VKI_SEEK_SET);
-        // TODO: Need to find a way to get `cp --reflink=auto` working, or at least
-        // do this in block sizes optimized for the file (obtained from `stat`).
-        for (int i = 0; i < tmp->size; i++) {
-            char c;
-            tl_assert(VG_(read)(tmp->descr, &c, 1) == 1);
-            tl_assert(VG_(write)(fd, &c, 1) == 1);
-        }
+        copy_file(tmp->name, file_name);
     }
 }
 
@@ -718,21 +730,21 @@ static void simulate_crash(void) {
         VG_(snprintf)(dump_file, 64, "bad-verification-%d.dump", pmem.pmat_num_verifications+1);
         VG_(snprintf)(stderr_file, 64, "bad-verification-%d.stderr", pmem.pmat_num_verifications+1);
         VG_(snprintf)(stdout_file, 64, "bad-verification-%d.stdout", pmem.pmat_num_verifications+1);
-        SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
         if (sr_isError(res)) {
             VG_(emit)("Could not open file '%s'; errno: %d\n", dump_file, sr_Err(res));
             tl_assert(0);
         }
         dump_to_file(sr_Res(res));
         VG_(close)(sr_Res(res));
-        res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
         if (sr_isError(res)) {
             VG_(emit)("Could not open file '%s'; errno: %d\n", stderr_file, sr_Err(res));
             tl_assert(0);
         }
         VG_(close)(2);
         VG_(dup2)(2, sr_Res(res));
-        res = VG_(open)(stdout_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+        res = VG_(open)(stdout_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
         if (sr_isError(res)) {
             VG_(emit)("Could not open file '%s'; errno: %d\n", stdout_file, sr_Err(res));
             tl_assert(0);
@@ -1756,7 +1768,7 @@ pmc_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             file->addr = addr;
             file->size = size;
             file->name = name;
-            SysRes res = VG_(open)(file->name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, VKI_S_IWUSR | VKI_S_IRUSR);
+            SysRes res = VG_(open)(file->name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             if (sr_isError(res)) {
                 VG_(emit)("Could not open file '%s'; errno: %d\n", file->name, sr_Err(res));
                 tl_assert(0);
