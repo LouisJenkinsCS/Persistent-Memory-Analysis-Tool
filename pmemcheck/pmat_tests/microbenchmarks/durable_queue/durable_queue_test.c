@@ -68,30 +68,32 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		#pragma omp master
 		printf("Number of threads: %d\n", omp_get_num_threads());
 		time_t end;
-		uint64_t iterations = 0;
 		DurableQueue_register(dq);
 
-		while (status != -1) {
-			#pragma master
+		while (atomic_load(&status) != -1) {
+			#pragma omp barrier
+			#pragma omp master
 			{
 				time(&end);
 				int time_taken = end - start;
 
 				if (time_taken >= seconds) {
-					status = -1;
+					atomic_store(&status, -1);
+					#pragma omp flush(status)
 				}
 			}
 
 			#pragma omp barrier
-			if (status == 0) {
-				#pragma barrier
-				#pragma master
+			if (atomic_load(&status) == 0) {
+				#pragma omp barrier
+				#pragma omp master
 				{
 					DurableQueue_gc(dq);
-					status = 1;
+					atomic_store(&status, 1);
+					#pragma omp flush(status)
 				} 
 				#pragma omp barrier // Hit next barrier so all threads leave barrier
-			} else if (status == -1) {
+			} else if (atomic_load(&status) == -1) {
 				break;
 			}
 
@@ -108,7 +110,9 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					bool success = DurableQueue_enqueue(dq, rng);
 
 					if (!success) {
-						status = 0;
+						int expect = 1;
+						atomic_compare_exchange_strong(&status, &expect, 0);
+						#pragma omp flush(status)
 					}	
 				}
 			}
