@@ -1,7 +1,7 @@
 Valgrind w/ Persistent Memory Analysis Tool (PMAT)
 ======================================
 
-[![Build Status](https://travis-ci.com/LouisJenkinsCS/valgrind.svg?branch=pmem-3.14)](https://travis-ci.com/louisjenkinscs/valgrind)
+[![Build Status](https://travis-ci.com/LouisJenkinsCS/Persistent-Memory-Analysis-Tool.svg?branch=master)](https://travis-ci.com/LouisJenkinsCS/Persistent-Memory-Analysis-Tool)
 
 **This Product has been derived from Intel's ['pmemcheck'](https://github.com/pmem/valgrind) tool.**
 
