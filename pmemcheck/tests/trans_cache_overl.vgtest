@@ -1,2 +1,0 @@
-prog: trans_cache_overl
-vgopts: --isa-rec=no -q

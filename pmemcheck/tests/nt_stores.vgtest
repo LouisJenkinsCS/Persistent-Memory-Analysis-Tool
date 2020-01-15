@@ -1,2 +1,0 @@
-prog: nt_stores
-vgopts: --isa-rec=no -q

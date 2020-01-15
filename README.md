@@ -6,7 +6,7 @@ Valgrind: an enhanced version for pmem
 
 This is the top-level README.md the enhanced version on Valgrind.
 This version has support for the new CLFLUSHOPT and CLWB instructions.
-It also introduces a new tool called pmemcheck which
+It also introduces a new tool called pmat which
 validates the correctness of stores made to persistent memory. Be aware
 that this is still a prototype tool.
 
@@ -15,7 +15,7 @@ Please see the file COPYING for information on the license.
 The layout is identical to the original Valgrind.
 The new tool is available in:
 
-* **pmemcheck** -- the new persistent memory aware tool
+* **pmat** -- the new persistent memory aware tool
 
 All packages necessary to build this modified version of Valgrind are
 the same as for the original version.
@@ -38,9 +38,9 @@ To run all regression tests:
 	$ make regtest
 ```
 
-To run pmemcheck tests only:
+To run pmat tests only:
 ```
-	$ perl tests/vg_regtest pmemcheck
+	$ perl tests/vg_regtest pmat
 ```
 
 To install Valgrind run (possibly as root if destination permissions
@@ -59,7 +59,7 @@ Where $PREFIX is the path specified with --prefix to configure.
 For information on how to run the new tool refer to the appropriate
 part of the documentation or type:
 ```
-	$ valgrind --tool=pmemcheck --help
+	$ valgrind --tool=pmat --help
 ```
 
 For more information on the modifications made to Valgrind

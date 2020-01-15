@@ -1,2 +1,0 @@
-prog: register_file
-vgopts: --isa-rec=no -q --log-stores=yes --print-summary=no

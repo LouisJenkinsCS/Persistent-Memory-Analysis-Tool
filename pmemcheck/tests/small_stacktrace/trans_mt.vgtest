@@ -1,2 +1,0 @@
-prog: trans_mt
-vgopts: --isa-rec=no -q

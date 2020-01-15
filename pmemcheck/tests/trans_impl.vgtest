@@ -1,2 +1,0 @@
-prog: trans_impl
-vgopts: --isa-rec=no -q

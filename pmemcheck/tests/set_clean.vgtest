@@ -1,2 +1,0 @@
-prog: set_clean
-vgopts: --isa-rec=no -q --print-summary=no

@@ -1,2 +1,0 @@
-prog: const_store
-vgopts: --isa-rec=no -q

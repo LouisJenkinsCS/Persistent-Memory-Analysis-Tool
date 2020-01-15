@@ -1,2 +1,0 @@
-prog: state_no_flush_align
-vgopts: --isa-rec=no -q --flush-align=no

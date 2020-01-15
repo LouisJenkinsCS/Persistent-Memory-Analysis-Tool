@@ -1,2 +1,0 @@
-prog: trans_no_pmem
-vgopts: --isa-rec=no -q

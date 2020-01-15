@@ -1,2 +1,0 @@
-prog: missed_flush
-vgopts: --isa-rec=no -q --flush-check=yes --flush-align=yes

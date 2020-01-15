@@ -1,4 +1,4 @@
-# Design of the Persistent Memory Analysis Tool (fork of pmemcheck)
+# Design of the Persistent Memory Analysis Tool (fork of pmat)
 
 ## Types of Bugs discoverable by PMAT
 
@@ -6,7 +6,7 @@
   * All stores to the same cache line is sequentially consistent
     * That is, they get written into it immediately.
   * Trade-off for using a granularity of cache lines
-    * PMDK's pmemcheck has granularity of individual stores
+    * PMDK's pmat has granularity of individual stores
     * Bookkeeping for individual stores requires far more time and space (linear)
     * Bookkeeping for cache lines requires only a constant amount of time and space.
   * Might be possible to use a hybrid approach for individual stores and cache lines

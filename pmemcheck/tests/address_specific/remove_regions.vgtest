@@ -1,2 +1,0 @@
-prog: remove_regions
-vgopts: --isa-rec=no -q --print-summary=no

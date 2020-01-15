@@ -1,2 +1,0 @@
-prog: region_manipulation
-vgopts: --isa-rec=no -q --print-summary=no

@@ -1,2 +1,0 @@
-prog: trans_cache_flush
-vgopts: --isa-rec=no -q

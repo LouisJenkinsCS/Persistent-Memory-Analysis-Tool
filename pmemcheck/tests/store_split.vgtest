@@ -1,2 +1,0 @@
-prog: store_split
-vgopts: --isa-rec=no -q --mult-stores=yes
