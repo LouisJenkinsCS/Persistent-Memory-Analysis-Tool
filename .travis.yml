@@ -6,7 +6,7 @@ dist: bionic
 script: ./autogen.sh
       && ./configure
       && sudo make install -j4
-      && cd pmat/pmat_tests
+      && cd pmat/tests
       && make
       && time valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./in-order-store
       && time valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./out-of-order-store

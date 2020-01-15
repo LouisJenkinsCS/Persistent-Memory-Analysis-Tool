@@ -2058,30 +2058,6 @@
 /pmat/Makefile.in
 /pmat/pmat-*-linux
 
-# /pmat/tests/address_specific
-/pmat/tests/address_specific/.deps
-/pmat/tests/address_specific/Makefile
-/pmat/tests/address_specific/Makefile.in
-/pmat/tests/address_specific/flush_align
-/pmat/tests/address_specific/region_coalescing
-/pmat/tests/address_specific/region_manipulation
-/pmat/tests/address_specific/remove_aligned_region
-/pmat/tests/address_specific/remove_regions
-
-# /pmat/tests/logging_related
-/pmat/tests/logging_related/.deps
-/pmat/tests/logging_related/Makefile
-/pmat/tests/logging_related/Makefile.in
-/pmat/tests/logging_related/logging
-/pmat/tests/logging_related/register_file
-
-# /pmat/tests/small_stacktrace
-/pmat/tests/small_stacktrace/.deps
-/pmat/tests/small_stacktrace/Makefile
-/pmat/tests/small_stacktrace/Makefile.in
-/pmat/tests/small_stacktrace/trans_mt
-/pmat/tests/small_stacktrace/trans_mt_cross
-
 # /shared/
 /shared/Makefile
 /shared/Makefile.in
