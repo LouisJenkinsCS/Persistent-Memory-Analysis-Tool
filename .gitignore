@@ -2058,35 +2058,6 @@
 /pmat/Makefile.in
 /pmat/pmat-*-linux
 
-# /pmat/tests/
-/pmat/tests/.deps
-/pmat/tests/Makefile
-/pmat/tests/cas
-/pmat/tests/const_store
-/pmat/tests/floats
-/pmat/tests/flush_check
-/pmat/tests/isa_check
-/pmat/tests/missed_flush
-/pmat/tests/multiple_stores
-/pmat/tests/nt_stores
-/pmat/tests/set_clean
-/pmat/tests/sse_stores
-/pmat/tests/state_machine
-/pmat/tests/state_machine2
-/pmat/tests/state_no_flush_align
-/pmat/tests/store_merge
-/pmat/tests/store_split
-/pmat/tests/tmp_store
-/pmat/tests/trans_cache_flush
-/pmat/tests/trans_cache_overl
-/pmat/tests/trans_excl
-/pmat/tests/trans_expl
-/pmat/tests/trans_impl
-/pmat/tests/trans_impl_nest
-/pmat/tests/trans_nest
-/pmat/tests/trans_no_pmem
-/pmat/tests/trans_only
-
 # /pmat/tests/address_specific
 /pmat/tests/address_specific/.deps
 /pmat/tests/address_specific/Makefile
