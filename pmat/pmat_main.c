@@ -1728,7 +1728,7 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
                 struct pmat_cache_entry entry;
                 entry.addr = TRIM_CACHELINE(addr);
                 struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
-                if (exist) {
+                if (exists) {
                     // TODO: Check bitset to see if we're violating it...
                 }
             } else {
