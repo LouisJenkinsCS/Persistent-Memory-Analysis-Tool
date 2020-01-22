@@ -297,29 +297,6 @@ print_store_ip_desc(UInt n, DiEpoch ep, Addr ip, void *uu_opaque)
 }
 
 /**
- * \brief Prints stack trace.
- *
- * \details Print stack trace.
- */
-static void
-pp_store_trace(const struct pmem_st *store, UInt n_ips)
-{
-    n_ips = n_ips == 0 ? VG_(get_ExeContext_n_ips)(store->context) : n_ips;
-
-    tl_assert( n_ips > 0 );
-
-    if (VG_(clo_xml))
-         VG_(printf_xml)("    <stack>\n");
-
-    DiEpoch ep = VG_(current_DiEpoch)();
-    VG_(apply_StackTrace)(print_store_ip_desc, NULL, ep,
-         VG_(get_ExeContext_StackTrace(store->context)), n_ips);
-
-    if (VG_(clo_xml))
-         VG_(printf_xml)("    </stack>\n");
-}
-
-/**
  * \brief Check if a memcpy/memset is at the given instruction address.
  *
  * \param[in] ip The instruction address to check.
@@ -1726,7 +1703,7 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             int *retaddr = arg[3];
             if (VG_(OSetGen_Size)(pmem.pmat_registered_files) > 0) {
                 struct pmat_cache_entry entry;
-                entry.addr = TRIM_CACHELINE(addr);
+                entry.addr = TRIM_CACHELINE(arg[1]);
                 struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
                 if (exists) {
                     // TODO: Check bitset to see if we're violating it...
