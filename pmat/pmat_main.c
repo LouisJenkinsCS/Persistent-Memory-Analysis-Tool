@@ -1701,6 +1701,8 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_PMAT_CRASH_ENABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_CRASH_DISABLE != arg[0]
             && VG_USERREQ__PMC_PMAT_TRANSIENT != arg[0]
+            && VG_USERREQ__PMC_PMAT_IS_PERSIST != arg[0]
+            && VG_USERREQ__PMC_PMAT_PERSIST_ORDER != arg[0]
             && VG_USERREQ__PMC_RESERVED1 != arg[0]
             && VG_USERREQ__PMC_RESERVED2 != arg[0]
             && VG_USERREQ__PMC_RESERVED3 != arg[0]
@@ -1713,6 +1715,26 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         return False;
 
     switch (arg[0]) {
+        case VG_USERREQ__PMC_PMAT_PERSIST_ORDER: {
+            // TODO: Fill out and create some data structure to hold everything.
+        }
+        // Check both simulated CPU Cache and whether or not write-back reordering buffer contains cache-line(s) for [addr, addr + sz)
+        // TODO: Handle cases where we cross multiple cache-lines
+        case VG_USERREQ__PMC_PMAT_IS_PERSIST: {
+            void *addr = arg[1];
+            size_t size = arg[2];
+            int *retaddr = arg[3];
+            if (VG_(OSetGen_Size)(pmem.pmat_registered_files) > 0) {
+                struct pmat_cache_entry entry;
+                entry.addr = TRIM_CACHELINE(addr);
+                struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
+                if (exist) {
+                    // TODO: Check bitset to see if we're violating it...
+                }
+            } else {
+                *retaddr = -1;
+            }
+        }
         // Add to table of addresses to ignore.
         case VG_USERREQ__PMC_PMAT_TRANSIENT: {
             // Check if the address is already included in some persistent

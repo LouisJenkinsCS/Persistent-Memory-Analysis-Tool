@@ -37,7 +37,9 @@ typedef
        VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,
        VG_USERREQ__PMC_PMAT_CRASH_DISABLE,
        VG_USERREQ__PMC_PMAT_CRASH_ENABLE,
-       VG_USERREQ__PMC_PMAT_TRANSIENT
+       VG_USERREQ__PMC_PMAT_TRANSIENT,
+       VG_USERREQ__PMC_PMAT_IS_PERSIST,
+       VG_USERREQ__PMC_PMAT_PERSIST_ORDER
    } Vg_pmatClientRequest;
 
 
@@ -94,5 +96,15 @@ typedef
 #define PMAT_TRANSIENT(_qzz_addr, _qzz_sz) \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_TRANSIENT, \
             (_qzz_addr), (_qzz_sz), 0, 0, 0)
+
+/** Determine if the entire address range[addr, addr+sz) has been written-back; writes result into _qzz_ret */
+#define PMAT_IS_PERSIST(_qzz_addr, _qzz_sz, _qzz_ret) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_IS_PERSIST, \
+            (_qzz_addr), (_qzz_sz), (_qzz_ret), 0, 0)
+
+/** Add constraint for persist ordering such that[addr1, addr1 + sz1)must persist no later than[addr2, addr2 + sz2). */
+#define PMAT_PERSIST_ORDER(_qzz_addr1, _qzz_sz1, _qzz_addr2, _qzz_sz2) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_PERSIST_ORDER, \
+            (_qzz_addr1), (_qzz_sz1), (_qzz_addr2), (_qzz_sz2), 0)
 
 #endif
