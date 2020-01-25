@@ -71,9 +71,6 @@ extern Int  VG_(waitpid)( Int pid, Int *status, Int options );
 extern Int  VG_(system) ( const HChar* cmd );
 extern Int  VG_(spawn)  ( const HChar *filename, const HChar **argv );
 extern Int  VG_(fork)   ( void);
-extern Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset);
-extern Int VG_(munmap)(Addr addr, UWord length);
-extern void VG_(ftruncate)(Int fd, UWord length);
 extern void VG_(execv)  ( const HChar* filename, const HChar** argv );
 extern Int  VG_(sysctl) ( Int *name, UInt namelen, void *oldp, SizeT *oldlenp, void *newp, SizeT newlen );
 

@@ -19,6 +19,7 @@
 #include <sys/param.h>
 #include <sys/ipc.h>
 #include "pub_tool_libcfile.h"
+#include "pub_tool_libcproc.h"
 #include <fcntl.h>
 #include "pub_tool_oset.h"
 #include "pub_tool_mallocfree.h"
@@ -569,11 +570,9 @@ static Bool exec(const char *cmd, char **args) {
     Int pid = VG_(fork)();
     if (pid == 0) {
         // Child
-        Int retval = VG_(execv)(cmd, args); 
-        if (retval) {
-            //VG_(emit)("Child returned with (%d:%d) (%d:%d) %d\n", VKI_WIFEXITED(retval), VKI_WEXITSTATUS(retval), VKI_WIFSIGNALED(retval), VKI_WTERMSIG(retval), VKI_WCOREDUMP(retval));
-            VG_(exit)(-1);
-        }
+        VG_(execv)(cmd, args); 
+        // failed?
+        VG_(exit)(-1);
     } else {
         Int retval;
         Int retpid = VG_(waitpid)(pid, &retval, 0);
@@ -740,9 +739,8 @@ static void simulate_crash(void) {
             args[n++] = file->name;
         } 
         args[n] = NULL;
-        if(VG_(execv)(pmem.pmat_verifier, args)) {
-            VG_(exit)(-1);
-        }
+        VG_(execv)(pmem.pmat_verifier, args);
+        VG_(exit)(-1);
     }
 }
 
@@ -1780,6 +1778,11 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             // that we have thread serialization thanks to Valgrind, we know
             // that the heap cannot be modified while we are making this copy.
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
+            addr = VG_(mmap)(NULL, file->size, VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, file->descr, 0);
+            if (addr != ((Addr) -1)) {
+                memcpy(addr, file->addr, file->size);
+                VG_(munmap)(addr, file->size);
+            }
             break;
         }
         case VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR: {

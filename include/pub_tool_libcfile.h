@@ -82,6 +82,10 @@ extern Int    VG_(write)  ( Int fd, const void* buf, Int count);
 extern Int    VG_(pipe)   ( Int fd[2] );
 extern Off64T VG_(lseek)  ( Int fd, Off64T offset, Int whence );
 
+extern Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset);
+extern Int VG_(munmap)(Addr addr, UWord length);
+extern void VG_(ftruncate)(Int fd, UWord length);
+
 extern SysRes VG_(stat)   ( const HChar* file_name, struct vg_stat* buf );
 extern Int    VG_(fstat)  ( Int   fd,        struct vg_stat* buf );
 extern SysRes VG_(dup)    ( Int oldfd );
