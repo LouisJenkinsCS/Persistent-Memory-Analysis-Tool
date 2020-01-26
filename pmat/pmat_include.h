@@ -19,14 +19,13 @@ struct pmat_cache_entry {
     UChar data[0];
 };
 
-typedef int (*pmat_verification_fn)(void *, SizeT sz);
 
 struct pmat_registered_file {
     char *name;
     UWord descr;
     Addr addr; 
     UWord size;
-    pmat_verification_fn verify; 
+    Addr mmap_addr;
 };
 
 struct pmat_write_buffer_entry {

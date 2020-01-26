@@ -186,6 +186,17 @@ void VG_(ftruncate)(Int fd, UWord length) {
    #endif
 }
 
+void VG_(msync)(Addr addr, UWord length, Int flags) {
+   #if defined(VGO_linux)
+   SysRes res = VG_(do_syscall3)(__NR_msync, addr, length, flags);
+   if (sr_isError(res)) {
+      VG_(emit)("msync failed with errno: %d\n", sr_Err(res));
+   }
+   #else
+   #error Unknown OS
+   #endif
+}
+
 Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset) {
    #if defined(VGO_linux)
    SysRes res = VG_(do_syscall6)(__NR_mmap, addr, length, prot, flags, fd, offset);

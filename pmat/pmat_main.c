@@ -241,20 +241,13 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
 
-    Off64T offset = VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_SET);
-    tl_assert(offset == entry->entry->addr - realFile->addr);
-    UChar cacheline[CACHELINE_SIZE];
-    VG_(read)(realFile->descr, cacheline, CACHELINE_SIZE);
+    UChar *bytes = realFile->mmap_addr + (entry->entry->addr - realFile->addr);
     for (ULong i = 0; i < CACHELINE_SIZE; i++) {
         ULong bit = (entry->entry->dirtyBits & (1ULL << i));
         if (bit) {
-            cacheline[i] = entry->entry->data[i];
+            bytes[i] = entry->entry->data[i];
         }
     }
-    offset = VG_(lseek)(realFile->descr, entry->entry->addr - realFile->addr, VKI_SEEK_SET);
-    tl_assert(offset == entry->entry->addr - realFile->addr);
-    Int retval = VG_(write)(realFile->descr, cacheline, CACHELINE_SIZE);
-    tl_assert2(retval == CACHELINE_SIZE, "Write could only writeback %d bytes of data!", retval);
 }
 
 /**
@@ -648,7 +641,16 @@ static void simulate_crash(void) {
         VG_(fmsg)("[Error] Attempt to force a crash without registering persistent region!\n");
         return;
     }
-    // Make copy of tests first...
+
+    // Flush all in-core copies of registered files...
+    VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+    struct pmat_registered_file *file = VG_(OSetGen_Next)(pmem.pmat_registered_files);
+    // Invalidate all files.
+    for (; file; file = VG_(OSetGen_Next)(pmem.pmat_registered_files)) {
+        VG_(msync)(file->mmap_addr, file->size, 0x6); // MS_SYNC | MS_INVALIDATE
+    }
+
+    // Make a copy of the shadow heap first
     Int pid = VG_(fork)();
     if (pid != 0) {
         struct vki_timespec start;
@@ -1779,10 +1781,9 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             // that the heap cannot be modified while we are making this copy.
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
             addr = VG_(mmap)(NULL, file->size, VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, file->descr, 0);
-            if (addr != ((Addr) -1)) {
-                memcpy(addr, file->addr, file->size);
-                VG_(munmap)(addr, file->size);
-            }
+            tl_assert2(addr != ((Addr) -1), "MMAP failed!");
+            memcpy(addr, file->addr, file->size);
+            file->mmap_addr = addr;
             break;
         }
         case VG_USERREQ__PMC_PMAT_UNREGISTER_BY_ADDR: {
