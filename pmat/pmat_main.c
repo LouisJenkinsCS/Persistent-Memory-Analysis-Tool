@@ -185,6 +185,7 @@ static Int find_file_by_addr(const struct pmat_registered_file *lhs, const struc
     }
 }
 
+
 /**
 * \brief Check if a given store overlaps with registered persistent memory
 *        regions.
@@ -241,7 +242,7 @@ static void write_to_file(struct pmat_write_buffer_entry *entry) {
     }
     tl_assert(realFile && "Unable to find descriptor associated with an address!");
 
-    UChar *bytes = realFile->mmap_addr + (entry->entry->addr - realFile->addr);
+    UChar *bytes = (void *) (realFile->mmap_addr + (entry->entry->addr - realFile->addr));
     for (ULong i = 0; i < CACHELINE_SIZE; i++) {
         ULong bit = (entry->entry->dirtyBits & (1ULL << i));
         if (bit) {
@@ -645,10 +646,6 @@ static void simulate_crash(void) {
     // Flush all in-core copies of registered files...
     VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
     struct pmat_registered_file *file = VG_(OSetGen_Next)(pmem.pmat_registered_files);
-    // Invalidate all files.
-    for (; file; file = VG_(OSetGen_Next)(pmem.pmat_registered_files)) {
-        VG_(msync)(file->mmap_addr, file->size, 0x6); // MS_SYNC | MS_INVALIDATE
-    }
 
     // Make a copy of the shadow heap first
     Int pid = VG_(fork)();
