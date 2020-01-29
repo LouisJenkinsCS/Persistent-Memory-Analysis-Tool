@@ -6,8 +6,11 @@ the testing tool is capable of finding bugs in the specific patterns.
 **To Build**
 
 ```
-make
+make tests CFLAGS="-I/path/to/valgrind/headers"
 ```
+
+*Note:* `make tests` is only required at the root of tests as Valgrind attempts to call `make`. In the future, I will overhaul the entire
+build system for PMAT to conform with the rest of valgrind, as discussed in https://github.com/LouisJenkinsCS/Persistent-Memory-Analysis-Tool/issues/10.
 
 **To Run (Example)**
 

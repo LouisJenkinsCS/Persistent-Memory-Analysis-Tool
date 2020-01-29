@@ -7,7 +7,7 @@ script: ./autogen.sh
       && ./configure
       && sudo make install -j4
       && cd pmat/tests
-      && make
+      && make tests
       && time valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./in-order-store
       && time valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./out-of-order-store
       && time valgrind --tool=pmat --pmat-verifier=openmp_test_verifier ./openmp_test

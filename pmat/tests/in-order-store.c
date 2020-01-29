@@ -21,6 +21,7 @@ int main(int argc, char *argv[]) {
 	/* create a pmem file and memory map it */
 	int *arr;
 	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
+	memset(arr, 0, SIZE);
 	PMAT_REGISTER("in-order-store.bin", arr, SIZE);
 
     // Initialize array sequentially...

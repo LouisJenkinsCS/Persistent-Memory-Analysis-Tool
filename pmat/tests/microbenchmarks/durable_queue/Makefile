@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fopenmp -ggdb3 -O3 -std=gnu11 -Wall -Wunknown-pragmas
+override CFLAGS += -fopenmp -ggdb3 -O3 -std=gnu11 -Wall -Wunknown-pragmas
 SRC=durable_queue.c durable_queue_test.c
 OBJ=$(SRC:.c=.o)
 EXEC=durable_queue

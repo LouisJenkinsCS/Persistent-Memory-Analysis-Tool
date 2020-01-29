@@ -66,6 +66,9 @@
 static struct pmem_ops {
     /** Pipe between parent and child */
     Int pmat_pipe_fd[2];
+
+    /** Number of cores available for use. */
+    Int pmat_num_procs;
     
     /** Mappings of files addresses to their descriptors */
     OSet *pmat_registered_files;
@@ -139,6 +142,41 @@ static void stringify_stack_trace(ExeContext *context, int fd);
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+// Obtain number of processors
+static Int get_num_procs(void) {
+    /* the assumed cache line size */
+    Int ret_val = -1;
+
+    int fp;
+    if ((fp = VG_(fd_open)("/proc/cpuinfo",O_RDONLY, 0)) < 0) {
+        return ret_val;
+    }
+
+    int proc_read_size = 2048;
+    char read_buffer[proc_read_size];
+
+    while (VG_(read)(fp, read_buffer, proc_read_size - 1) > 0) {
+        static const char procs[] = "cpu cores\t: ";
+        read_buffer[proc_read_size] = 0;
+
+        char *cache_str = NULL;
+        if ((cache_str = VG_(strstr)(read_buffer, procs)) != NULL) {
+            /* move to cache line size */
+            cache_str += sizeof (procs) - 1;
+            ret_val = VG_(strtoll10)(cache_str, NULL) ? : 64;
+            break;
+        }
+    }
+
+    VG_(close)(fp);
+
+    if (ret_val == -1) {
+        VG_(emit)("Unable to read /proc/cpuinfo, falling back to single-core...");
+        return 1;
+    }
+    return ret_val;
+}
 
 // Update statistics for nanoseconds per verification call
 static void update_stats(Double sec) {
@@ -1900,6 +1938,7 @@ pmat_post_clo_init(void)
     pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmat.main.cpci.-1", VG_(free));
+    pmem.pmat_num_procs = get_num_procs();
 }
 
 /**

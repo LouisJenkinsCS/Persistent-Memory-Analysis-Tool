@@ -1,7 +1,7 @@
 ## Build
 
 ```
-make
+make CFLAGS="-I/path/to/valgrind/headers"
 ```
 
 ## Cleanup
