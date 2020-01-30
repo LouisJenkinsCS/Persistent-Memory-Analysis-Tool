@@ -15,7 +15,7 @@ build system for PMAT to conform with the rest of valgrind, as discussed in http
 **To Run (Example)**
 
 ```
-valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./out-of-order-store
+valgrind --tool=pmat --verifier=in-order-store_verifier ./out-of-order-store
 ```
 
 The output `*.bin*` files contain the state of the sample used during verification.
@@ -33,7 +33,7 @@ your application).
 ## Test Combination
 
 ```
-valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./in-order-store
-valgrind --tool=pmat --pmat-verifier=in-order-store_verifier ./out-of-order-store
-valgrind --tool=pmat --pmat-verifier=openmp_test_verifier ./openmp_test
+valgrind --tool=pmat --verifier=in-order-store_verifier ./in-order-store
+valgrind --tool=pmat --verifier=in-order-store_verifier ./out-of-order-store
+valgrind --tool=pmat --verifier=openmp_test_verifier ./openmp_test
 ```

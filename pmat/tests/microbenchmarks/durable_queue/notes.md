@@ -1,5 +1,5 @@
 ```
-valgrind --tool=pmat --pmat-verifier=./durable_queue_verifier ./durable_queue 60
+valgrind --tool=pmat --verifier=./durable_queue_verifier ./durable_queue 60
 ==17518== PMAT-0.1, Persistent Memory Analysis Tool
 ==17518== University of Rochester
 ==17518== Using Valgrind-3.14.0 and LibVEX; rerun with -h for copyright info

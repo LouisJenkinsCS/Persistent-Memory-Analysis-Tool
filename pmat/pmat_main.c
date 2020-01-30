@@ -108,6 +108,15 @@ static struct pmem_ops {
 
     /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
     Double pmat_ssd_verification_time;
+
+    /** Random Seed used for RNG. */
+    UInt pmat_rng_seed;
+
+    /** Probability of random eviction... Defaults to 0.5. */
+    Double pmat_eviction_prob;
+
+    /** Probability of crash occurring... Defaults to 0.01. */
+    Double pmat_crash_prob;
 } pmem;
 
 /*
@@ -142,6 +151,23 @@ static void stringify_stack_trace(ExeContext *context, int fd);
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+static UInt get_random(void) {
+    return VG_(random)(&pmem.pmat_rng_seed);
+}
+
+static UInt get_urandom(void) {
+    int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+    if (fd < 0) {
+        VG_(emit)("Could not open /dev/urandom, defaulting to static seed...");
+        return 0;
+    }
+
+    UInt ret;
+    VG_(read)(fd, &ret, sizeof(UInt));
+    VG_(close)(fd);
+    return ret;
+}
 
 // Obtain number of processors
 static Int get_num_procs(void) {
@@ -783,7 +809,7 @@ static void simulate_crash(void) {
 
 static void maybe_simulate_crash(void) {
     if (!pmem.pmat_should_verify || !pmem.pmat_verifier || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
-    if ((VG_(random)(NULL) % 100) == 0) {
+    if ((get_random() % 100) <= pmem.pmat_crash_prob) {
         simulate_crash();
     }
 }
@@ -848,7 +874,7 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
             XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
             VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
             while ( (entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries)) ) {
-                if (VG_(random)(NULL) % 2) {
+                if ((get_random() % 100) <= pmem.pmat_eviction_prob) {
                    VG_(addToXA)(arr, &entry); 
                 }
             }
@@ -1266,7 +1292,7 @@ static void do_writeback(struct pmat_cache_entry *entry) {
         VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
         struct pmat_write_buffer_entry *entry;
         while ( (entry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
-            if (VG_(random)(NULL) % 10 == 0) {
+            if ((get_random() % 100) <= pmem.pmat_eviction_prob) {
                 VG_(addToXA)(arr, &entry); 
             }
         }
@@ -1911,7 +1937,11 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 static Bool
 pmat_process_cmd_line_option(const HChar *arg)
 {
-    if VG_STR_CLO(arg, "--pmat-verifier", pmem.pmat_verifier) {}
+    pmem.pmat_crash_prob = 0;
+    pmem.pmat_eviction_prob = 0;
+    if VG_STR_CLO(arg, "--verifier", pmem.pmat_verifier) {}
+    else if VG_INT_CLO(arg, "--eviction-probability", pmem.pmat_eviction_prob) {}
+    else if VG_INT_CLO(arg, "--crash-probability", pmem.pmat_crash_prob) {}
     else return False;
 
     return True;
@@ -1939,6 +1969,13 @@ pmat_post_clo_init(void)
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmat.main.cpci.-1", VG_(free));
     pmem.pmat_num_procs = get_num_procs();
+    pmem.pmat_rng_seed = get_urandom();
+    if (pmem.pmat_crash_prob == 0) {
+        pmem.pmat_crash_prob == 0.01;
+    }
+    if (pmem.pmat_eviction_prob == 0) {
+        pmem.pmat_eviction_prob = 0.5;
+    }
 }
 
 /**
@@ -1948,8 +1985,8 @@ static void
 pmat_print_usage(void)
 {
     VG_(emit)(
-            "    --pmat-verifier=<path/to/exec>         verifier to call when simulating crash\n"
-            "                                           default [no verification]\n"
+            "    --verifier=<path/to/exec>         verifier to call when simulating crash\n"
+            "                                      default [no verification]\n"
     );
 }
 

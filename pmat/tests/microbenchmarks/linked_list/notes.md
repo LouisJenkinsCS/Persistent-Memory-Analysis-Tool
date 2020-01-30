@@ -1,5 +1,5 @@
 ```
-> valgrind --tool=pmat --pmat-verifier=linked_list_verifier ./linked_list g $((1024*1024))
+> valgrind --tool=pmat --verifier=linked_list_verifier ./linked_list g $((1024*1024))
 
 ==18582== PMAT-0.1, Persistent Memory Analysis Tool
 ==18582== University of Rochester

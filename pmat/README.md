@@ -43,7 +43,7 @@ testing it would be ideal to have both automatic crash and strategic calls.
 **Registering a _Verification_ Function**
 
 ```bash
-valgrind --tool=pmat --pmat-verifier=verifier ./application
+valgrind --tool=pmat --verifier=verifier ./application
 ```
 
 The plan is that the binary files mentioned above are used to run recovery on.

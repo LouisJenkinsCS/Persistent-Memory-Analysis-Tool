@@ -13,5 +13,5 @@ make clean
 ## Test
 
 ```
-valgrind --tool=pmat --pmat-verifier=durable_queue_verifier ./durable_queue 5
+valgrind --tool=pmat --verifier=durable_queue_verifier ./durable_queue 5
 ```
