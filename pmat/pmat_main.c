@@ -34,6 +34,8 @@
 #include "pub_tool_machine.h"
 #include "pub_tool_stacktrace.h"
 #include "pub_tool_debuginfo.h"
+#include "pub_core_syscall.h"
+#include "pub_core_syswrap.h"
 #include "pmat.h"
 #include "pmat_include.h"
 #include "pub_tool_vki.h"
@@ -126,14 +128,28 @@ static struct pmem_ops {
 
     /** The shm or tmp mmap address. */
     struct pmat_shm *pmat_shm_times;
-
-    /** Mapping of pid to pmat_shm index. */
-    OSet *pmat_shm_mappings;
 } pmem;
 
 // The data representation of the shm or tmp file representing verification times
 struct pmat_shm {
-    Double time;
+    /** The SysV semaphore id. */
+    Int sem_id;
+    /** The SysV semaphore for mutual exclusion. */
+    struct vki_sembuf sem;
+    /** Average nanoseconds per verification call*/
+    Double pmat_average_verification_time;
+
+    /** Minimum nanoseconds per verification call*/
+    Double pmat_min_verification_time;
+
+    /** Maximum nanoseconds per verification call*/
+    Double pmat_max_verification_time;
+
+    /** Mean nanoseconds per verification call*/
+    Double pmat_mean_verification_time;
+
+    /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
+    Double pmat_ssd_verification_time;
 };
 
 /*
@@ -168,6 +184,18 @@ static void stringify_stack_trace(ExeContext *context, int fd);
 static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+static void sem_acquire(void) {
+    struct vki_sembuf sops;
+    sops.sem_op = -1;
+    VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
+}
+
+static void sem_release(void) {
+    struct vki_sembuf sops;
+    sops.sem_op = 1;
+    VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
+}
 
 static UInt get_random(void) {
     return VG_(random)(&pmem.pmat_rng_seed);
@@ -730,14 +758,14 @@ static void simulate_crash(void) {
     // Make a copy of the shadow heap first
     Word suffix = pmem.pmat_num_verifications++;
     char suffix_str[32];
-    snprintf(suffix_str, 32, "%lu", suffix);
-    copy_files(suffix);
+    VG_(snprintf)(suffix_str, 32, "%lu", suffix);
+    copy_files(suffix_str);
 
     // Check how many procs are currently running and if they exceed the maximum.
     if (pmem.pmat_num_procs == pmem.pmat_max_verification_procs) {
         // Wait for one of the child processes to finish.
         Int retval;
-        VG_(wait)(-1, &retval, 0);
+        VG_(waitpid)(-1, &retval, 0);
         tl_assert2(VKI_WIFEXITED(retval), "Child process exited with abnormal status!");
         Int status = VKI_WEXITSTATUS(retval);
         switch (status) {
@@ -758,19 +786,19 @@ static void simulate_crash(void) {
     if (pid1 != 0) {
         // Parent should continue execution...
     } else {
-        // Child...
+        // Child should create grandchild to run actual verification program
+        // and monitor grandchild and report its time.
         Int pid = VG_(fork)();
         if (pid != 0) {
+            // Child - Keep track of time
             struct vki_timespec start;
             struct vki_timespec end;
             tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &start) == 0, "Failed to get start time!");
-            // Parent...
             Int retval;
             Int retpid = VG_(waitpid)(pid, &retval, 0);
             tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &end) == 0, "Failed to get end time!");
             tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
 
-            
             Double sec = diff(start, end);
             update_stats(sec);
             pmem.pmat_max_verification_time = VG_MAX(pmem.pmat_max_verification_time, sec);
@@ -809,7 +837,7 @@ static void simulate_crash(void) {
             }
             VG_(exit)(-1);
         } else {
-            // Child...
+            // Grandchild...
             int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);
             // Redirect to a file...
             char dump_file[64];
@@ -2034,9 +2062,13 @@ pmat_post_clo_init(void)
     // Create /dev/shm file if a verifier exists; used to keep track of
     // statistics and communication between parent and children.
     if (pmem.pmat_verifier != NULL) {
-        int fd = VG_(fd_open)("/dev/shm/pmat", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+        char *pathname = "/dev/shm/pmat";
+        char *sempathname = "/dev/shm/pmat_sem";
+        int fd = VG_(fd_open)(pathname, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
         if (fd < 0) {
-            fd = VG_(fd_open)("/tmp/pmat", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+            pathname = "/tmp/pmat";
+            sempathname = "/tmp/pmat_sem";
+            fd = VG_(fd_open)(pathname, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             tl_assert2(fd >= 0, "Unable to open /dev/shm/pmat or /tmp/pmat!");
         }
         VG_(ftruncate)(fd, pmem.pmat_max_verification_procs * sizeof(struct pmat_shm));
@@ -2044,6 +2076,8 @@ pmat_post_clo_init(void)
         Addr addr = VG_(mmap)(NULL, pmem.pmat_max_verification_procs * sizeof(struct pmat_shm), VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, fd, 0);
         tl_assert2(addr != ((Addr) -1), "MMAP failed!");
         pmem.pmat_shm_times = addr;
+        vki_key_t semkey = ftok(sempathname, 'P' | 'M' | 'A' | 'T');
+        Int semid = VG_(semget)(semkey, 0, VKI_IPC_CREAT | 0666);
     }
 }
 
