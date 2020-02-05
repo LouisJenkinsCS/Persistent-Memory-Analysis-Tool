@@ -79,7 +79,7 @@ static struct pmem_ops {
     OSet *pmat_cache_entries;
     
     /** Store buffer for to-be-written-back stores. */
-    OSet *pmat_write_buffer_entries;
+    OSet *pmat_writeback_buffer_entries;
 
     /** Number of verifications that have been run so far. */
     Word pmat_num_verifications;
@@ -590,11 +590,11 @@ static char *dump_to_file(int fd) {
     VG_(OSetGen_Destroy)(unique_cache_lines);
     unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
 
-    VG_(snprintf)(charbuf, 256, "Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
+    VG_(snprintf)(charbuf, 256, "Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries));
     VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
-    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
     struct pmat_writeback_buffer_entry *wbentry = NULL;
-    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries))) {
         if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->locOfStore)) continue;
         ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
         *node = wbentry->entry->locOfStore;
@@ -657,10 +657,10 @@ static void dump(void) {
     VG_(OSetGen_Destroy)(unique_cache_lines);
     unique_cache_lines = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
 
-    VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries));
-    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries));
+    VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
     struct pmat_writeback_buffer_entry *wbentry = NULL;
-    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries))) {
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries))) {
         if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->locOfStore)) continue;
         ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
         *node = wbentry->entry->locOfStore;
@@ -671,8 +671,14 @@ static void dump(void) {
         struct pmat_registered_file *realFile = VG_(OSetGen_LookupWithCmp)(pmem.pmat_registered_files, &file, find_file_by_addr);
         tl_assert(realFile);
         VG_(umsg)("Leaked Cache-Line at address 0x%lx belonging to file '%s'\n", entry->addr, realFile->name);
-        VG_(umsg)("~~~~~~~~~~~~~~~\n");
+        VG_(umsg)("~~~~~~(Location of Store)~~~~~~~~~\n");
         VG_(pp_ExeContext)(entry->locOfStore);
+        VG_(umsg)("~~~~~~(Location of Flush)~~~~~~~~~\n");
+        if (wbentry->locOfFlush) {
+            VG_(pp_ExeContext)(wbentry->locOfFlush);
+        } else {
+            VG_(umsg)("(EVICTED)\n");
+        }
         VG_(umsg)("~~~~~~~~~~~~~~~\n");
     }
 }
@@ -1290,14 +1296,14 @@ add_event_dw(IRSB *sb, IRAtom *daddr, Int dsize, IRAtom *value)
 static void
 _do_fence(void)
 {   
-    if (VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries) == 0) {
+    if (VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries) == 0) {
         return;
     }
     ThreadId tid = VG_(get_running_tid)();
     XArray *arr = VG_(newXA)(VG_(malloc), "pmat_wb_fence", VG_(free), sizeof(struct pmat_writeback_buffer_entry));  
-    VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+    VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
     struct pmat_writeback_buffer_entry *wbentry;
-    while ( (wbentry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
+    while ( (wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries)) ) {
         if (wbentry->tid == tid) {
             VG_(addToXA)(arr, &wbentry); 
         }
@@ -1308,8 +1314,8 @@ _do_fence(void)
         wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
         write_to_file(wbentry);
         VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
-        VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
-        VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
+        VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+        VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
     }
     VG_(deleteXA)(arr);
 }
@@ -1357,16 +1363,16 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
     // See if this entry already exists
     struct pmat_writeback_buffer_entry wblookup;
     wblookup.entry = entry;
-    struct pmat_writeback_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_write_buffer_entries, &wblookup);
+    struct pmat_writeback_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_writeback_buffer_entries, &wblookup);
     if (exist) {
        write_to_file(exist);
        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
-       VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, exist);
-       VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, exist);
+       VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, exist);
+       VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, exist);
     }
 
     // Store Buffer
-    struct pmat_writeback_buffer_entry *wbentry = VG_(OSetGen_AllocNode)(pmem.pmat_write_buffer_entries, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
+    struct pmat_writeback_buffer_entry *wbentry = VG_(OSetGen_AllocNode)(pmem.pmat_writeback_buffer_entries, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     wbentry->entry = entry;
     wbentry->tid = tid;
     if (explicit) {
@@ -1374,12 +1380,12 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
     } else {
         wbentry->locOfFlush = NULL;
     }
-    VG_(OSetGen_Insert)(pmem.pmat_write_buffer_entries, wbentry);
-    if (VG_(OSetGen_Size)(pmem.pmat_write_buffer_entries) > NUM_WB_ENTRIES) {
+    VG_(OSetGen_Insert)(pmem.pmat_writeback_buffer_entries, wbentry);
+    if (VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries) > NUM_WB_ENTRIES) {
         XArray *arr = VG_(newXA)(VG_(malloc), "pmat_wb_eviction", VG_(free), sizeof(struct pmat_writeback_buffer_entry));  
-        VG_(OSetGen_ResetIter)(pmem.pmat_write_buffer_entries);
+        VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
         struct pmat_writeback_buffer_entry *entry;
-        while ( (entry = VG_(OSetGen_Next)(pmem.pmat_write_buffer_entries)) ) {
+        while ( (entry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries)) ) {
             if ((get_random() % 100) <= pmem.pmat_eviction_prob) {
                 VG_(addToXA)(arr, &entry); 
             }
@@ -1389,8 +1395,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
             wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
             write_to_file(wbentry);
             VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
-            VG_(OSetGen_Remove)(pmem.pmat_write_buffer_entries, wbentry);
-            VG_(OSetGen_FreeNode)(pmem.pmat_write_buffer_entries, wbentry);
+            VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+            VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
         }
         VG_(deleteXA)(arr);
     }
@@ -2052,7 +2058,7 @@ pmat_post_clo_init(void)
     pmem.pmat_average_verification_time = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
-    pmem.pmat_write_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
+    pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
             4 * NUM_WB_ENTRIES, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
     pmem.pmat_should_verify = True;
@@ -2085,8 +2091,10 @@ pmat_post_clo_init(void)
         Addr addr = VG_(mmap)(NULL, pmem.pmat_max_verification_procs * sizeof(struct pmat_shm), VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, fd, 0);
         tl_assert2(addr != ((Addr) -1), "MMAP failed!");
         pmem.pmat_shm_times = addr;
-        vki_key_t semkey = ftok(sempathname, 'P' | 'M' | 'A' | 'T');
-        Int semid = VG_(semget)(semkey, 0, VKI_IPC_CREAT | 0666);
+        vki_key_t semkey = 'P' | 'M' | 'A' | 'T';
+        Int semid = VG_(semget)(semkey, 1, VKI_IPC_CREAT | 0666);
+        tl_assert2(semid >= 0, "semget failed for key %d and returned semid %d\n", semkey, semid);
+        pmem.pmat_shm_times->sem_id = semid;
     }
 }
 
