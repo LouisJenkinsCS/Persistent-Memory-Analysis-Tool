@@ -20,8 +20,8 @@
 #include "pmat_include.h"
 
 Word cmp_pmat_write_buffer_entries(const void *key, const void *elem) {
-    const struct pmat_write_buffer_entry *lhs = (const struct pmat_write_buffer_entry *) (key);
-    const struct pmat_write_buffer_entry *rhs = (const struct pmat_write_buffer_entry *) (elem);
+    const struct pmat_writeback_buffer_entry *lhs = (const struct pmat_writeback_buffer_entry *) (key);
+    const struct pmat_writeback_buffer_entry *rhs = (const struct pmat_writeback_buffer_entry *) (elem);
 
     return cmp_pmat_cache_entries(lhs->entry, rhs->entry);
 }
