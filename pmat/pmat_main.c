@@ -68,64 +68,30 @@
 static struct pmem_ops {
     /** Pipe between parent and child */
     Int pmat_pipe_fd[2];
-
     /** Number of cores available for use. */
     Int pmat_num_procs;
-    
     /** Mappings of files addresses to their descriptors */
     OSet *pmat_registered_files;
-
     /* Entries in cache; TODO: Use a Pool */
     OSet *pmat_cache_entries;
-    
     /** Store buffer for to-be-written-back stores. */
     OSet *pmat_writeback_buffer_entries;
-
-    /** Number of verifications that have been run so far. */
-    Word pmat_num_verifications;
-
-    /** Number of bad verification that have been run so far. */
-    Word pmat_num_bad_verifications;
-
     /** Whether or not we should verify */
     Bool pmat_should_verify;
-
     /** Verification program */
     HChar *pmat_verifier;
-
     /** Set of addresses to ignore (marked transient) */
-    OSet *pmat_transient_addresses;
-
-    /** Average nanoseconds per verification call*/
-    Double pmat_average_verification_time;
-
-    /** Minimum nanoseconds per verification call*/
-    Double pmat_min_verification_time;
-
-    /** Maximum nanoseconds per verification call*/
-    Double pmat_max_verification_time;
-
-    /** Mean nanoseconds per verification call*/
-    Double pmat_mean_verification_time;
-
-    /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
-    Double pmat_ssd_verification_time;
-
+    OSet *pmat_transient_addresses; 
     /** Random Seed used for RNG. */
     UInt pmat_rng_seed;
-
     /** Probability of random eviction... Defaults to 0.5. */
     Double pmat_eviction_prob;
-
     /** Probability of crash occurring... Defaults to 0.01. */
     Double pmat_crash_prob;
-
     /** The maximum number of parallel processes to spawn... Defaults to num_procs - 1. */
     Int pmat_max_verification_procs;
-
     /** The shm or tmp file descriptor. */
     Int pmat_shm_fd;
-
     /** The shm or tmp mmap address. */
     struct pmat_shm *pmat_shm_times;
 } pmem;
@@ -136,20 +102,22 @@ struct pmat_shm {
     Int sem_id;
     /** The SysV semaphore for mutual exclusion. */
     struct vki_sembuf sem;
+    /** The number of currently running verifiers. */
+    Word num_running;
+    /** Number of verifications that have been run so far. */
+    Word num_verifications;
+    /** Number of bad verifications. */
+    Word num_bad_verifications;
     /** Average nanoseconds per verification call*/
-    Double pmat_average_verification_time;
-
+    Double average_verification_time;
     /** Minimum nanoseconds per verification call*/
-    Double pmat_min_verification_time;
-
+    Double min_verification_time;
     /** Maximum nanoseconds per verification call*/
-    Double pmat_max_verification_time;
-
+    Double max_verification_time;
     /** Mean nanoseconds per verification call*/
-    Double pmat_mean_verification_time;
-
+    Double mean_verification_time;
     /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
-    Double pmat_ssd_verification_time;
+    Double ssd_verification_time;
 };
 
 /*
@@ -251,15 +219,15 @@ static Int get_num_procs(void) {
 
 // Update statistics for nanoseconds per verification call
 static void update_stats(Double sec) {
-    Double delta1 = sec - pmem.pmat_mean_verification_time;
-    pmem.pmat_mean_verification_time += delta1 / ((Double) pmem.pmat_num_verifications);
-    Double delta2 = sec - (Double) pmem.pmat_mean_verification_time;
-    pmem.pmat_ssd_verification_time += delta1 * delta2;
+    Double delta1 = sec - pmem.pmat_shm_times->mean_verification_time;
+    pmem.pmat_shm_times->mean_verification_time += delta1 / ((Double) pmem.pmat_shm_times->num_verifications);
+    Double delta2 = sec - (Double) pmem.pmat_shm_times->mean_verification_time;
+    pmem.pmat_shm_times->ssd_verification_time += delta1 * delta2;
 }
 
 static void get_stats(Double *mean, Double *variance) {
-    *mean = pmem.pmat_mean_verification_time;
-    *variance = pmem.pmat_ssd_verification_time / (Double) pmem.pmat_num_verifications;
+    *mean = pmem.pmat_shm_times->mean_verification_time;
+    *variance = pmem.pmat_shm_times->ssd_verification_time / (Double) pmem.pmat_shm_times->num_verifications;
 }
 
 // Comparator for finding a file associated with a name
@@ -370,7 +338,7 @@ static void
 print_store_stats(void)
 {
     dump();
-    VG_(umsg)("%d out of %d verifications failed...\n", pmem.pmat_num_bad_verifications, pmem.pmat_num_verifications);
+    VG_(umsg)("%d out of %d verifications failed...\n", pmem.pmat_shm_times->num_bad_verifications, pmem.pmat_shm_times->num_verifications);
 }
 
 /**
@@ -546,8 +514,6 @@ cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs) {
     return 0;
 }
 
-typedef void (*split_clb)(struct pmem_st *store,  OSet *set, Bool preallocated);
-
 static char *dump_to_file(int fd) {
     VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
     HChar charbuf[256];
@@ -697,7 +663,7 @@ static Bool exec(const char *cmd, char **args) {
     }
 }
 
-static Bool copy_file(const char *f1, const char *f2) {
+static Bool copy_file(char *f1, char *f2) {
     char *args[5];
     args[0] = "cp";
     args[1] = f1;
@@ -712,7 +678,7 @@ static void copy_files(char *suffix) {
     struct pmat_registered_file *tmp;
     while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
         char file_name[1024];
-        VG_(snprintf)(file_name, 1024, "%s.%d.%s", tmp->name, pmem.pmat_num_verifications, suffix);
+        VG_(snprintf)(file_name, 1024, "%s.%s.%d", tmp->name, suffix, pmem.pmat_shm_times->num_verifications);
         copy_file(tmp->name, file_name);
     }
 }
@@ -770,31 +736,30 @@ static void simulate_crash(void) {
     
     
     // Make a copy of the shadow heap first
-    Word suffix = pmem.pmat_num_verifications++;
-    char suffix_str[32];
-    VG_(snprintf)(suffix_str, 32, "%lu", suffix);
-    copy_files(suffix_str);
+    sem_acquire();
+    Int verif_num = pmem.pmat_shm_times->num_verifications;
+    copy_files("fork");
+    sem_release();
 
-    // Check how many procs are currently running and if they exceed the maximum.
-    if (pmem.pmat_num_procs == pmem.pmat_max_verification_procs) {
-        // Wait for one of the child processes to finish.
+    while (True) {
+        sem_acquire();
+        // Less than maximum verifications running...
+        if (pmem.pmat_shm_times->num_running < pmem.pmat_max_verification_procs) {
+            sem_release();
+            break;
+        }
+        sem_release();
+
+        // Wait for any verification task to finish...
         Int retval;
         VG_(waitpid)(-1, &retval, 0);
-        tl_assert2(VKI_WIFEXITED(retval), "Child process exited with abnormal status!");
-        Int status = VKI_WEXITSTATUS(retval);
-        switch (status) {
-            // It's okay, grab the time and update...
-            case 0: {
-                
-            }
-            // Bad Verification 
-            case -1: {
-                pmem.pmat_num_bad_verifications++;
-            }
-        }
-        // TODO: Need to read in verification times!
     }
-    
+
+    // Start timer...
+    struct vki_timespec start;
+    struct vki_timespec end;
+    tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &start) == 0, "Failed to get start time!");
+
     // Fork to create child
     Int pid1 = VG_(fork)();
     if (pid1 != 0) {
@@ -804,70 +769,81 @@ static void simulate_crash(void) {
         // and monitor grandchild and report its time.
         Int pid = VG_(fork)();
         if (pid != 0) {
-            // Child - Keep track of time
-            struct vki_timespec start;
-            struct vki_timespec end;
-            tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &start) == 0, "Failed to get start time!");
-            Int retval;
-            Int retpid = VG_(waitpid)(pid, &retval, 0);
-            tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &end) == 0, "Failed to get end time!");
-            tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
-
-            Double sec = diff(start, end);
-            update_stats(sec);
-            pmem.pmat_max_verification_time = VG_MAX(pmem.pmat_max_verification_time, sec);
-            pmem.pmat_min_verification_time = VG_MIN(pmem.pmat_min_verification_time, sec);
-            if (pmem.pmat_min_verification_time == 0) pmem.pmat_min_verification_time = sec;
-
-            // Check if child exited normally...
-            if (VKI_WIFEXITED(retval)) {
-                Int status = VKI_WEXITSTATUS(retval);
-                if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
-                    pmem.pmat_num_bad_verifications++;
-                    copy_files("bad");
-                } else if (status == 0) {
-                    // Delete files created by child...
-                    char dump_file[64];
-                    char stderr_file[64];
-                    char stdout_file[64];
-                    VG_(snprintf)(dump_file, 64, "bad-verification-%d.dump", pmem.pmat_num_verifications);
-                    VG_(snprintf)(stderr_file, 64, "bad-verification-%d.stderr", pmem.pmat_num_verifications);
-                    VG_(snprintf)(stdout_file, 64, "bad-verification-%d.stdout", pmem.pmat_num_verifications);
-                    VG_(unlink)(dump_file);
-                    VG_(unlink)(stderr_file);
-                    VG_(unlink)(stdout_file);
-                    VG_(exit)(0);
-                } else {
-                    pmem.pmat_num_bad_verifications++;
-                    copy_files("bad");
-                }
-            } else if (VKI_WIFSIGNALED(retval)) {
-                pmem.pmat_num_bad_verifications++;
-                copy_files("bad.coredump");
-            } else {
-                pmem.pmat_num_bad_verifications++;
-                copy_files("bad.weird");
-                tl_assert2(0, "Verification process terminated in very unusual way!");
-            }
-            VG_(exit)(-1);
-        } else {
-            // Grandchild...
-            int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);
-            // Redirect to a file...
+            // Create verif_num.dump while waiting for grandchild...
             char dump_file[64];
-            char stderr_file[64];
-            char stdout_file[64];
-            VG_(snprintf)(dump_file, 64, "bad-verification-%d.dump", pmem.pmat_num_verifications);
-            VG_(snprintf)(stderr_file, 64, "bad-verification-%d.stderr", pmem.pmat_num_verifications);
-            VG_(snprintf)(stdout_file, 64, "bad-verification-%d.stdout", pmem.pmat_num_verifications);
+            VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
             SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             if (sr_isError(res)) {
                 VG_(emit)("Could not open file '%s'; errno: %d\n", dump_file, sr_Err(res));
                 tl_assert(0);
             }
             dump_to_file(sr_Res(res));
-            VG_(close)(sr_Res(res));
-            res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+
+            // Wait for grandchild
+            Int retval;
+            Int retpid = VG_(waitpid)(pid, &retval, 0);
+            tl_assert2(VG_(clock_gettime)(VKI_CLOCK_MONOTONIC, &end) == 0, "Failed to get end time!");
+            tl_assert2(pid == retpid, "waitpid(%d) returned unexpected pid %d", pid, retpid);
+
+            Double sec = diff(start, end);
+            sem_acquire();
+            update_stats(sec);
+            pmem.pmat_shm_times->max_verification_time = VG_MAX(pmem.pmat_shm_times->max_verification_time, sec);
+            pmem.pmat_shm_times->min_verification_time = VG_MIN(pmem.pmat_shm_times->min_verification_time, sec);
+            if (pmem.pmat_shm_times->min_verification_time == 0) pmem.pmat_shm_times->min_verification_time = sec;
+
+            // Check if child exited normally...
+            if (VKI_WIFEXITED(retval)) {
+                Int status = VKI_WEXITSTATUS(retval);
+                if (status == PMAT_VERIFICATION_FAILURE || status == -PMAT_VERIFICATION_FAILURE) {
+                    pmem.pmat_shm_times->num_bad_verifications++;
+                } else if (status == 0) {
+                    // Delete dump
+                    char dump_file[64];
+                    VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
+                    VG_(unlink)(dump_file);
+                    
+                    // Delete files created by grandchild...
+                    char stderr_file[64];
+                    char stdout_file[64];
+
+                    VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
+                    VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
+                    VG_(unlink)(stderr_file);
+                    VG_(unlink)(stdout_file);
+
+                    // Delete forked binaries
+                    VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+                    struct pmat_registered_file *tmp;
+                    while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+                        char file_name[1024];
+                        VG_(snprintf)(file_name, 1024, "%s.%s.%d", tmp->name, "fork", verif_num);
+                        VG_(unlink)(file_name);
+                    }
+
+                    // Release semaphore and exit successfully
+                    sem_release();
+                    VG_(exit)(0);
+                } else {
+                    pmem.pmat_shm_times->num_bad_verifications++;
+                }
+            } else if (VKI_WIFSIGNALED(retval)) {
+                pmem.pmat_shm_times->num_bad_verifications++;
+            } else {
+                pmem.pmat_shm_times->num_bad_verifications++;
+                tl_assert2(0, "Verification process terminated in very unusual way!");
+            }
+            sem_release();
+            VG_(exit)(-1);
+        } else {
+            // Grandchild...
+            int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);
+            // Redirect to a file...
+            char stderr_file[64];
+            char stdout_file[64];
+            VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
+            VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
+            SysRes res =VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             if (sr_isError(res)) {
                 VG_(emit)("Could not open file '%s'; errno: %d\n", stderr_file, sr_Err(res));
                 tl_assert(0);
@@ -890,8 +866,11 @@ static void simulate_crash(void) {
             VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
             struct pmat_registered_file *file;
             while ((file = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
-                args[n++] = file->name;
-            } 
+                // Will be name.fork.verif_num...
+                char *fname = VG_(malloc)(1024);
+                VG_(snprintf)(fname, 1024, "%s.fork.%d", file->name, verif_num);
+                args[n++] = fname;
+            }
             args[n] = NULL;
             VG_(execv)(pmem.pmat_verifier, args);
             VG_(exit)(-1);
@@ -1937,7 +1916,7 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             VG_(OSetGen_Insert)(pmem.pmat_registered_files, file);
             addr = VG_(mmap)(NULL, file->size, VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, file->descr, 0);
             tl_assert2(addr != ((Addr) -1), "MMAP failed!");
-            memcpy(addr, file->addr, file->size);
+            VG_(memcpy)(addr, file->addr, file->size);
             file->mmap_addr = addr;
             break;
         }
@@ -2050,12 +2029,12 @@ pmat_process_cmd_line_option(const HChar *arg)
 static void
 pmat_post_clo_init(void)
 {
-    pmem.pmat_num_verifications = 0;
-    pmem.pmat_num_bad_verifications = 0;
-    pmem.pmat_min_verification_time = 0;
-    pmem.pmat_max_verification_time = 0;
-    pmem.pmat_ssd_verification_time = 0;
-    pmem.pmat_average_verification_time = 0;
+    pmem.pmat_shm_times->num_verifications = 0;
+    pmem.pmat_shm_times->num_bad_verifications = 0;
+    pmem.pmat_shm_times->min_verification_time = 0;
+    pmem.pmat_shm_times->max_verification_time = 0;
+    pmem.pmat_shm_times->ssd_verification_time = 0;
+    pmem.pmat_shm_times->average_verification_time = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
@@ -2161,12 +2140,12 @@ static void
 pmat_fini(Int exitcode)
 {
     print_store_stats();
-    if (pmem.pmat_num_verifications) {
+    if (pmem.pmat_shm_times->num_verifications) {
         Double mean, var, mins, maxs, stds;
         Word mean_norm, var_norm, mins_norm, maxs_norm, stds_norm;
         get_stats(&mean, &var);
-        mins = pmem.pmat_min_verification_time;
-        maxs = pmem.pmat_max_verification_time;
+        mins = pmem.pmat_shm_times->min_verification_time;
+        maxs = pmem.pmat_shm_times->max_verification_time;
         stds = sqrt(var);
         scientificNotation(mean, &mean, &mean_norm);
         scientificNotation(var, &var, &var_norm);
