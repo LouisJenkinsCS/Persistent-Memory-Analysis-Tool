@@ -743,14 +743,15 @@ static void simulate_crash(void) {
     
     // Make a copy of the shadow heap first
     sem_acquire();
-    Int verif_num = pmem.pmat_shm_times->num_verifications++;
+    Int verif_num = ++pmem.pmat_shm_times->num_verifications;
     copy_files("fork");
-    sem_release();
+    sem_release();  
 
     while (True) {
         sem_acquire();
         // Less than maximum verifications running...
         if (pmem.pmat_shm_times->num_running < pmem.pmat_max_verification_procs) {
+            pmem.pmat_shm_times->num_running++;
             sem_release();
             break;
         }
@@ -828,6 +829,7 @@ static void simulate_crash(void) {
                     }
 
                     // Release semaphore and exit successfully
+                    pmem.pmat_shm_times->num_running--;
                     sem_release();
                     VG_(exit)(0);
                 } else {
@@ -839,6 +841,7 @@ static void simulate_crash(void) {
                 pmem.pmat_shm_times->num_bad_verifications++;
                 tl_assert2(0, "Verification process terminated in very unusual way!");
             }
+            pmem.pmat_shm_times->num_running--;
             sem_release();
             VG_(exit)(-1);
         } else {
@@ -2065,7 +2068,7 @@ pmat_post_clo_init(void)
             fd = VG_(fd_open)(pathname, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             tl_assert2(fd >= 0, "Unable to open /dev/shm/pmat or /tmp/pmat!");
         }
-        VG_(ftruncate)(fd, pmem.pmat_max_verification_procs * sizeof(struct pmat_shm));
+        VG_(ftruncate)(fd, sizeof(struct pmat_shm));
         pmem.pmat_shm_fd = fd;
         Addr addr = VG_(mmap)(NULL, pmem.pmat_max_verification_procs * sizeof(struct pmat_shm), VKI_PROT_READ | VKI_PROT_WRITE,  VKI_MAP_SHARED, fd, 0);
         tl_assert2(addr != ((Addr) -1), "MMAP failed!");

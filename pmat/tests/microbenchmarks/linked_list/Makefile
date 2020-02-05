@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-ggdb3 -O3 -std=gnu11
+override CFLAGS += -ggdb3 -O3 -std=gnu11
 TEST_SRC=linked_list.c linked_list_test.c
 TEST_OBJ=$(TEST_SRC:.c=.o)
 TEST_EXEC=linked_list
