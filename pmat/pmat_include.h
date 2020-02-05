@@ -13,7 +13,8 @@ struct pmat_transient_entry {
 
 struct pmat_cache_entry {
     // Bitmap to keep track of dirty bits
-    ExeContext *lastPendingStore;
+    ExeContext *locOfStore;
+    ThreadId tid; // id of last thread to store
     ULong dirtyBits;
     Addr addr;
     UChar data[0];
@@ -28,8 +29,9 @@ struct pmat_registered_file {
     Addr mmap_addr;
 };
 
-struct pmat_write_buffer_entry {
+struct pmat_writeback_buffer_entry {
     struct pmat_cache_entry *entry;
+    ExeContext *locOfFlush;
     ThreadId tid; 
 };
 

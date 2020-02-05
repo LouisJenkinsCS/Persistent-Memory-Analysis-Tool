@@ -151,8 +151,12 @@ AM_CPPFLAGS_@VGCONF_PLATFORM_PRI_CAPS@ = \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/include \
 	-I$(top_builddir)/include \
+	-I$(top_srcdir)/include/vki \
+	-I$(top_builddir)/include/vki \
 	-I$(top_srcdir)/VEX/pub \
 	-I$(top_builddir)/VEX/pub \
+	-I$(top_srcdir)/coregrind \
+	-I$(top_builddir)/coregrind \
 	-DVGA_@VGCONF_ARCH_PRI@=1 \
 	-DVGO_@VGCONF_OS@=1 \
 	-DVGP_@VGCONF_ARCH_PRI@_@VGCONF_OS@=1 \
@@ -164,6 +168,10 @@ AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@ = \
 	-I$(top_builddir)/include \
 	-I$(top_srcdir)/VEX/pub \
 	-I$(top_builddir)/VEX/pub \
+	-I$(top_srcdir)/coregrind \
+	-I$(top_builddir)/coregrind \
+	-I$(top_srcdir)/include/vki \
+	-I$(top_builddir)/include/vki \
 	-DVGA_@VGCONF_ARCH_SEC@=1 \
 	-DVGO_@VGCONF_OS@=1 \
 	-DVGP_@VGCONF_ARCH_SEC@_@VGCONF_OS@=1 \
