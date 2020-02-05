@@ -153,14 +153,20 @@ static Bool cmp_exe_context(const ExeContext* lhs, const ExeContext* rhs);
 static Bool cmp_exe_context2(const ExeContext *lhs, const ExeContext *rhs);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
 
+static void sem_init(void) {
+    struct vki_sembuf sops = {0};
+    sops.sem_op = 1;
+    VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
+}
+
 static void sem_acquire(void) {
-    struct vki_sembuf sops;
+    struct vki_sembuf sops = {0};
     sops.sem_op = -1;
     VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
 }
 
 static void sem_release(void) {
-    struct vki_sembuf sops;
+    struct vki_sembuf sops = {0};
     sops.sem_op = 1;
     VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
 }
@@ -737,7 +743,7 @@ static void simulate_crash(void) {
     
     // Make a copy of the shadow heap first
     sem_acquire();
-    Int verif_num = pmem.pmat_shm_times->num_verifications;
+    Int verif_num = pmem.pmat_shm_times->num_verifications++;
     copy_files("fork");
     sem_release();
 
@@ -843,7 +849,7 @@ static void simulate_crash(void) {
             char stdout_file[64];
             VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
             VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
-            SysRes res =VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+            SysRes res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             if (sr_isError(res)) {
                 VG_(emit)("Could not open file '%s'; errno: %d\n", stderr_file, sr_Err(res));
                 tl_assert(0);
@@ -867,7 +873,7 @@ static void simulate_crash(void) {
             struct pmat_registered_file *file;
             while ((file = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
                 // Will be name.fork.verif_num...
-                char *fname = VG_(malloc)(1024);
+                char *fname = VG_(malloc)("pmat.file.name", 1024);
                 VG_(snprintf)(fname, 1024, "%s.fork.%d", file->name, verif_num);
                 args[n++] = fname;
             }
@@ -2029,12 +2035,6 @@ pmat_process_cmd_line_option(const HChar *arg)
 static void
 pmat_post_clo_init(void)
 {
-    pmem.pmat_shm_times->num_verifications = 0;
-    pmem.pmat_shm_times->num_bad_verifications = 0;
-    pmem.pmat_shm_times->min_verification_time = 0;
-    pmem.pmat_shm_times->max_verification_time = 0;
-    pmem.pmat_shm_times->ssd_verification_time = 0;
-    pmem.pmat_shm_times->average_verification_time = 0;
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
             2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
@@ -2074,7 +2074,14 @@ pmat_post_clo_init(void)
         Int semid = VG_(semget)(semkey, 1, VKI_IPC_CREAT | 0666);
         tl_assert2(semid >= 0, "semget failed for key %d and returned semid %d\n", semkey, semid);
         pmem.pmat_shm_times->sem_id = semid;
+        sem_init();
     }
+    pmem.pmat_shm_times->num_verifications = 0;
+    pmem.pmat_shm_times->num_bad_verifications = 0;
+    pmem.pmat_shm_times->min_verification_time = 0;
+    pmem.pmat_shm_times->max_verification_time = 0;
+    pmem.pmat_shm_times->ssd_verification_time = 0;
+    pmem.pmat_shm_times->average_verification_time = 0;
 }
 
 /**
