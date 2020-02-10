@@ -21,3 +21,7 @@ script: ./autogen.sh
       && time valgrind --tool=pmat --verifier=linked_list_verifier ./linked_list g $((8 * 1024))
       && time valgrind --tool=pmat --verifier=linked_list_verifier ./linked_list b $((8 * 1024))
       && make clean
+      && cd ../verifications
+      && make
+      && time valgrind --tool=pmat --verifier=nop_verifier ./nop 10
+      && make clean
