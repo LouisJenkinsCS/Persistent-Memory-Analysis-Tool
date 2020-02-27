@@ -74,6 +74,11 @@ extern Int  VG_(fork)   ( void);
 extern void VG_(execv)  ( const HChar* filename, const HChar** argv );
 extern Int  VG_(sysctl) ( Int *name, UInt namelen, void *oldp, SizeT *oldlenp, void *newp, SizeT newlen );
 
+extern Addr VG_(mmap)(Addr addr, UWord length, Int prot, Int flags, Int fd, UWord offset);
+extern Int VG_(munmap)(Addr addr, UWord length);
+extern void VG_(ftruncate)(Int fd, UWord length);
+extern Int VG_(clock_gettime)(vki_clockid_t clk_id, struct vki_timespec *tp);
+
 /* ---------------------------------------------------------------------
    Resource limits and capabilities
    ------------------------------------------------------------------ */
