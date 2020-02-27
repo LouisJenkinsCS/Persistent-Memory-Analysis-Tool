@@ -4741,11 +4741,7 @@ AC_CONFIG_FILES([
    exp-bbv/tests/ppc32-linux/Makefile
    exp-bbv/tests/arm-linux/Makefile
    shared/Makefile
-   pmemcheck/Makefile
-   pmemcheck/tests/Makefile
-   pmemcheck/tests/address_specific/Makefile
-   pmemcheck/tests/logging_related/Makefile
-   pmemcheck/tests/small_stacktrace/Makefile
+   pmat/Makefile
    solaris/Makefile
 ])
 AC_CONFIG_FILES([coregrind/link_tool_exe_linux],
