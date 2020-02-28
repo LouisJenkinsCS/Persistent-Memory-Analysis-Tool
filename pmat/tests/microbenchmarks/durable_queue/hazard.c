@@ -5,12 +5,14 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <stdint.h>
 
 struct hazard {
-	volatile bool in_use;
+	atomic_flag in_use;
 	size_t id;
 	cvector_vector_type(void *) retired;
-	void *owned[HAZARDS_PER_THREAD];
+	atomic_uintptr_t owned[HAZARDS_PER_THREAD];
 	void (*destructor)(void *);
 	struct hazard *next;
 };
@@ -45,8 +47,8 @@ __attribute__((constructor)) static void init_tls_key(void) {
 }
 
 static bool cvector_contains(cvector_vector_type(void *) vec, void *item) {
-	for (void **obj = cvector_begin(vec); obj != cvector_end(vec); obj++) {
-		if (*obj == item) {
+	for (int i = 0; i < cvector_size(vec); i++) {
+		if (vec[i] == item) {
 			return true;
 		}
 	}
@@ -91,15 +93,18 @@ static void scan(struct hazard *hp) {
 		are non-NULL, hence in use.
 	*/
 	for (struct hazard *tmp_hp = hazard_table->head; tmp_hp; tmp_hp = tmp_hp->next)
-		for (int i = 0; i < HAZARDS_PER_THREAD; i++)
-			if (tmp_hp->owned[i])
-				cvector_push_back(private_list, tmp_hp->owned[i]);
+		for (int i = 0; i < HAZARDS_PER_THREAD; i++) {
+			uintptr_t hptr = atomic_load(&tmp_hp->owned[i]);
+			if (hptr != 0)
+				cvector_push_back(private_list, (void *) hptr);
+		}
 	
 	size_t arr_size = cvector_size(hp->retired);
 	cvector_vector_type(void *) tmp_arr = NULL;
-	cvector_grow(tmp_arr, cvector_size(hp->retired));
-	memcpy(tmp_arr, hp->retired, cvector_size(hp->retired) * sizeof(void *));
-	cvector_set_size(hp->retired, 0);
+	for (int i = 0; i < arr_size; i++) {
+		cvector_push_back(tmp_arr, hp->retired[i]);
+	}
+	while (cvector_size(hp->retired) != 0) cvector_pop_back(hp->retired);
 	
 	/*
 		Since each thread has it's own list of retired pointers, we check to see
@@ -119,7 +124,7 @@ static void scan(struct hazard *hp) {
 static void help_scan(struct hazard *hp) {
 	for (struct hazard *tmp_hp = hazard_table->head; tmp_hp; tmp_hp = tmp_hp->next) {
 		// If we fail to mark the hazard pointer as active, then it's already in use.
-		if (tmp_hp->in_use || !__sync_bool_compare_and_swap(&tmp_hp->in_use, false, true)) 
+		if (atomic_flag_test_and_set(&tmp_hp->in_use)) 
 			continue;
 
 		void *data;
@@ -131,13 +136,13 @@ static void help_scan(struct hazard *hp) {
 				scan(hp);
 		}
 
-		tmp_hp->in_use = false;
+		atomic_flag_clear(&tmp_hp->in_use);
 	}
 }
 
 static struct hazard *create() {
-	struct hazard *hp = malloc(sizeof(*hp));
-	hp->in_use = true;	
+	struct hazard *hp = calloc(1, sizeof(*hp));
+	atomic_flag_test_and_set(&hp->in_use);	
 	hp->retired = NULL;
 	return hp;
 }
@@ -145,7 +150,7 @@ static struct hazard *create() {
 static void init_tls_hp(void) {
 	static volatile int index = 0;
 	for (struct hazard *tmp_hp = hazard_table->head; tmp_hp; tmp_hp = tmp_hp->next) {
-		if (tmp_hp->in_use || __sync_bool_compare_and_swap(&tmp_hp->in_use, false, true)) 
+		if (atomic_flag_test_and_set(&tmp_hp->in_use)) 
 			continue;
 
 		pthread_setspecific(tls, tmp_hp);	
@@ -171,7 +176,7 @@ bool hazard_acquire(unsigned int index, void *data) {
 		init_tls_hp();
 		hp = pthread_getspecific(tls);
 	}
-	hp->owned[index] = data;	
+	atomic_store(&hp->owned[index], (uintptr_t) data);	
 	return true;
 }
 
@@ -204,7 +209,7 @@ bool hazard_release(void *data, bool retire) {
 		return false;
 	
 	for (int i = 0; i < HAZARDS_PER_THREAD; i++) {
-		if (hp->owned[i] == data) {
+		if (atomic_load(&hp->owned[i]) == data) {
 			hp->owned[i] = NULL;
 			if (retire) {
 				cvector_push_back(hp->retired, data);
@@ -213,6 +218,7 @@ bool hazard_release(void *data, bool retire) {
 					help_scan(hp);
 				}
 			}
+			break;
 		}
 	}
 

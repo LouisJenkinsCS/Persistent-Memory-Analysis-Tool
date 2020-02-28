@@ -11,6 +11,8 @@
 #include "durable_queue.h"
 #include <omp.h>
 #include <time.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 // Size is N + 1 as we need space for the sentinel node
 #define N (1024 * 1024)
@@ -18,21 +20,30 @@
 
 // Sanity Check to determine whether or not the queue is working...
 static void check_queue(struct DurableQueue *dq) {
-	int redux = 0;
+	long redux = 0;
 	#pragma omp parallel for reduction (+:redux)
 	for (int i = 0; i < N; i++) {
 		assert(DurableQueue_enqueue(dq, i) == true);
 		redux += i;
 	}
 
+	long checkredux = 0;
+	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
+		if (node == dq->head) {
+			continue;
+		}
+		checkredux += node->value;
+	}
+	printf("Sanity check: redux = %lld, checkredux = %lld\n", redux, checkredux);
+
 	printf("Finished enqueue with redux of %ld...\n", redux);
 	// Ensure that the queue is filled to the brim and that we cannot allocate any more
 	assert(DurableQueue_enqueue(dq, -1) == false); 
 
-	int redux2 = 0;
-	#pragma omp parallel for reduction (+:redux) 
+	long redux2 = 0;
+	#pragma omp parallel for reduction (+:redux2) 
 	for (int i = 0; i < N; i++) {
-		int ret = DurableQueue_dequeue(dq, omp_get_thread_num());
+		long ret = DurableQueue_dequeue(dq, omp_get_thread_num());
 		if (ret >= 0)
 			redux2 += ret;
 	}
@@ -84,7 +95,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					bool success = DurableQueue_enqueue(dq, rng);
 
 					if (!success) {
-						assert(false && "Out of memory!!!");
+						assert(false && "Out of Memory!!!");
 					}	
 				}
 			}
@@ -110,6 +121,7 @@ int main(int argc, char *argv[]) {
 	PMAT_CRASH_DISABLE();
 	void *heap;
 	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, SIZE) == 0);
+	memset(heap, 0, SIZE);
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
     struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
 	printf("Sanity checking queue...\n");
