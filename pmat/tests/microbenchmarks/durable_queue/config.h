@@ -1,0 +1,2 @@
+#define MAX_THREADS 128
+#define HAZARDS_PER_THREAD 1

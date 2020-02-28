@@ -3,9 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdatomic.h>
-
-
-#define MAX_THREADS 8
+#include "config.h"
 
 // For documentation purposes...
 // Refers to something being transient or persistent
@@ -47,7 +45,7 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
 
 struct DurableQueueNode *DurableQueue_alloc(struct DurableQueue *dq) TRANSIENT;
 
-void DurableQueue_free(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT;
+void DurableQueue_free(struct DurableQueueNode *node, struct DurableQueue *dq) TRANSIENT;
 
 void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) TRANSIENT;
 
@@ -69,7 +67,3 @@ bool DurableQueue_verify(void *heap, size_t sz);
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT;
 
 int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT;
-
-void DurableQueue_register(struct DurableQueue *dq) TRANSIENT;
-
-void DurableQueue_unregister(struct DurableQueue *dq) TRANSIENT;

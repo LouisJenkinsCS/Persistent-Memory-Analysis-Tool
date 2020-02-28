@@ -18,40 +18,29 @@
 
 // Sanity Check to determine whether or not the queue is working...
 static void check_queue(struct DurableQueue *dq) {
-	#pragma omp parallel
-	{
-		DurableQueue_register(dq);
-		for (int i = 0; i < N / omp_get_num_threads(); i++) {
-			assert(DurableQueue_enqueue(dq, i) == true);
-		}
-		#pragma omp barrier
-
-		#pragma omp master
-		printf("Finished enqueue...\n");
-
-		// Ensure that the queue is filled to the brim and that we cannot allocate any more
-		#pragma omp master
-		assert(DurableQueue_enqueue(dq, -1) == false); 
-		#pragma omp barrier
-
-		for (int i = 0; i < N / omp_get_num_threads(); i++) {
-			assert(DurableQueue_dequeue(dq, omp_get_thread_num()) >= 0);
-		}
-		#pragma omp barrier
-
-		#pragma omp master
-		printf("Finished dequeue...\n");
-
-		// Sanity check: Should be empty
-		assert(DurableQueue_dequeue(dq, omp_get_thread_num()) == DQ_EMPTY);
-
-		#pragma omp master
-		DurableQueue_gc(dq);
-
-
-		DurableQueue_unregister(dq);
+	int redux = 0;
+	#pragma omp parallel for reduction (+:redux)
+	for (int i = 0; i < N; i++) {
+		assert(DurableQueue_enqueue(dq, i) == true);
+		redux += i;
 	}
-	//DurableQueue_gc(dq);
+
+	printf("Finished enqueue with redux of %ld...\n", redux);
+	// Ensure that the queue is filled to the brim and that we cannot allocate any more
+	assert(DurableQueue_enqueue(dq, -1) == false); 
+
+	int redux2 = 0;
+	#pragma omp parallel for reduction (+:redux) 
+	for (int i = 0; i < N; i++) {
+		int ret = DurableQueue_dequeue(dq, omp_get_thread_num());
+		if (ret >= 0)
+			redux2 += ret;
+	}
+	printf("Finished dequeue with redux of %ld...\n", redux2);
+
+	// Sanity check: Should be empty
+	assert(DurableQueue_dequeue(dq, omp_get_thread_num()) == DQ_EMPTY);
+	assert(redux == redux2);
 }
 
 // Note: This performs randomized enqueue/dequeue operations in lock-step due to the stop-the-world approach
@@ -68,10 +57,9 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		#pragma omp master
 		printf("Number of threads: %d\n", omp_get_num_threads());
 		time_t end;
-		DurableQueue_register(dq);
 
 		while (atomic_load(&status) != -1) {
-			#pragma omp barrier
+			#pragma omp taskyield
 			#pragma omp master
 			{
 				time(&end);
@@ -82,21 +70,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					#pragma omp flush(status)
 				}
 			}
-
-			#pragma omp barrier
-			if (atomic_load(&status) == 0) {
-				#pragma omp barrier
-				#pragma omp master
-				{
-					DurableQueue_gc(dq);
-					atomic_store(&status, 1);
-					#pragma omp flush(status)
-				} 
-				#pragma omp barrier // Hit next barrier so all threads leave barrier
-			} else if (atomic_load(&status) == -1) {
-				break;
-			}
-
+			
 			numOperations++;
 			int rng = rand();
 			if (rng % 2 == 0) {
@@ -110,16 +84,12 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					bool success = DurableQueue_enqueue(dq, rng);
 
 					if (!success) {
-						int expect = 1;
-						atomic_compare_exchange_strong(&status, &expect, 0);
-						#pragma omp flush(status)
+						assert(false && "Out of memory!!!");
 					}	
 				}
 			}
 		}
 		printf("Thread %d performed %lu operations\n", omp_get_thread_num(), numOperations);
-
-		DurableQueue_unregister(dq);
 	}
 	printf("Performed %ld operations\n", numOperations);
 }
