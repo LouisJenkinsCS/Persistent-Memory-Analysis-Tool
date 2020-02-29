@@ -8,7 +8,6 @@
 #include <cassert>
 
 #define DQ_MAX_THREADS 16
-#define DQ_EMPTY -1
 
 namespace DurableQueue
 {
@@ -138,6 +137,10 @@ namespace DurableQueue
                     bool operator==(ABA<T> other) {
                         return this->ptr.lo == other.ptr.lo && this->ptr.hi == other.ptr.hi;
                     }
+
+                    bool operator!=(ABA<T> other) {
+                        return !operator==(other);
+                    }
                 private:
                     uint128_t __attribute__ ((aligned (16))) ptr;
             };
@@ -261,8 +264,6 @@ namespace DurableQueue
 
             private:
                Memory::DWord::ABAPtr<FreeListNode<T>> head;
-
-            
         };
     }
     
@@ -285,12 +286,12 @@ namespace DurableQueue
         if (node == nullptr) {
             os << "[NULL]";
         } else {
-            os << "(" << node->obj << ", " << reinterpret_cast<void *>(node->next.load()) << ", " << node->deqThreadID << ")";
+            os << "(.obj=" << node->obj << ", .next=" << reinterpret_cast<void *>(node->next.load()) << ", .deqThreadID=" << node->deqThreadID << ")";
         }
         return os;
     }
 
-    template <class T, T NilT = T()>
+    template <class T, T EmptyT, T NilT = T()>
     class DurableQueue {
         public:
             // Heap is leftover persistent memory region that we
@@ -325,12 +326,16 @@ namespace DurableQueue
                 this->tail.store(dummy);
             }
 
+            size_t size() {
+                return head.load().get_seq() - tail.load().get_seq();
+            }
+
             bool enqueue(T t) {
                 DurableQueueNode<T, NilT> *node = freeList->pop();
                 if (!node) return false;
                 node->deqThreadID = -1;
                 node->next = nullptr;
-                node->obj = NilT;
+                node->obj = t;
                 
                 while (true) {
                     Memory::DWord::ABA<DurableQueueNode<T, NilT>> last = tail.load();
@@ -352,9 +357,46 @@ namespace DurableQueue
 
                 return true;
             }
+
+            T dequeue(int tid) {
+                retvals[tid] = NilT;
+
+                while(true) {
+                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> _head = head.load();
+                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> _tail = tail.load();
+                    if (head.load() != _head) {
+                        continue;
+                    }
+
+                    DurableQueueNode<T, NilT> *next = _head.to_ptr()->next.load();
+                    if (_head == _tail) {
+                        if (next == nullptr) {
+                            retvals[tid] = EmptyT;
+                            return EmptyT;
+                        } else {
+                            tail.CAS(_tail, next);
+                        }
+                    } else {
+                        T retval = next->obj;
+                        int expectedID = -1;
+                        if (next->deqThreadID.compare_exchange_strong(expectedID, tid)) {
+                            retvals[tid] = retval;
+                            head.CAS(_head, next);
+                            return retval;
+                        } else {
+                            assert(expectedID != -1);
+                            T& address = retvals[expectedID];
+                            if (head.load() == _head) {
+                                address = retval;
+                                head.CAS(_head, next);
+                            }
+                        }
+                    }
+                }
+            }
             
-            template <class R, R NilR>
-            friend std::ostream& operator<<(std::ostream& os, DurableQueue<R, NilR> *dq);
+            template <class R, R EmptyR, R NilR>
+            friend std::ostream& operator<<(std::ostream& os, DurableQueue<R, EmptyR, NilR> *dq);
 
         private: 
             // Persistent head of queue
@@ -372,21 +414,21 @@ namespace DurableQueue
     };
 
     // Note: Not thread safe...
-    template <class T, T NilT>
-    std::ostream& operator<<(std::ostream& os, DurableQueue<T, NilT> *dq) {
+    template <class T, T EmptyT, T NilT>
+    std::ostream& operator<<(std::ostream& os, DurableQueue<T, EmptyT, NilT> *dq) {
         DurableQueueNode<T, NilT> *head = dq->head.load().to_ptr();
         DurableQueueNode<T, NilT> *tail = dq->tail.load().to_ptr();
         os << "{ ";
         while (head != tail) {
-            os << head->next << " ";
+            os << head->next.load() << " ";
             head = head->next.load();
         }
         os << "}";
         return os;
     }
 
-    template <class T, T NilT = T()>
-    static DurableQueue<T, NilT> *alloc(uint8_t *heap, size_t sz) {
-        return new (heap) DurableQueue<T, NilT>(heap + sizeof(DurableQueue<T, NilT>), sz - sizeof(DurableQueue<T, NilT>));
+    template <class T, T EmptyT, T NilT = T()>
+    static DurableQueue<T, EmptyT, NilT> *alloc(uint8_t *heap, size_t sz) {
+        return new (heap) DurableQueue<T, EmptyT, NilT>(heap + sizeof(DurableQueue<T, EmptyT, NilT>), sz - sizeof(DurableQueue<T, EmptyT, NilT>));
     }
 }
