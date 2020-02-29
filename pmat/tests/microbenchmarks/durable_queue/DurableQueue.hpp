@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <cstdbool>
 #include <vector>
+#include <iostream>
+
+#define DQ_MAX_THREADS 16
+#define DQ_EMPTY -1
 
 namespace DurableQueue
 {
@@ -112,10 +116,11 @@ namespace DurableQueue
                     ABA() : ptr() {}
                     ABA(uint128_t u128) : ptr(u128) {}
                     ABA(T* t) {
-                        ptr.set_seq(static_cast<uint64_t>(static_cast<uintptr_t>(t)));
+                        ptr.set_seq(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<void *>(t))));
                     }
-                    T& operator*() { return *static_cast<T*>(ptr.get_ptr()); }
-                    T* operator->() { return static_cast<T*>(ptr.get_ptr()); }
+                    T& operator*() { return *reinterpret_cast<T*>(ptr.get_ptr()); }
+                    T* operator->() { return reinterpret_cast<T*>(ptr.get_ptr()); }
+                    operator T*() { return reinterpret_cast<T*>(ptr.get_ptr()); }
                     uint64_t get_seq() { return ptr.get_seq(); }
                     uint128_t& to_ptr() { return ptr; }
                 private:
@@ -145,6 +150,17 @@ namespace DurableQueue
                         DWord::read128bit(&abaRef, &aba);
                         return aba;
                     }
+
+                    void operator=(ABA<T>& other) {
+                        store(other);
+                    }
+
+                    void operator=(T *other) {
+                        uint128_t& abaRef = aba.to_ptr();
+                        uint128_t valueRef;
+                        valueRef.set_ptr(reinterpret_cast<uint64_t>(other));
+                        DWord::write128bit_special(&abaRef, &valueRef);
+                    }
                 private:
                     ABA<T> aba;
             };
@@ -168,7 +184,7 @@ namespace DurableQueue
         template <class T>
         class FreeList {
             public:
-                void push(T& t) {
+                void push(T t) {
                     Memory::DWord::ABA<FreeListNode<T>> node(new FreeListNode<T>(t));
                     Memory::DWord::ABA<FreeListNode<T>> _head;
                     do {
@@ -198,24 +214,57 @@ namespace DurableQueue
             DurableQueueNode<T> *next;    
     };
 
-    template <class T>
+    template <class T, T NilT = T()>
     class DurableQueue {
         public:
-            DurableQueue(void *heap) {
+            // Heap is leftover persistent memory region that we
+            // are utilizing to create nodes from.
+            DurableQueue(uint8_t *heap, size_t sz) {
+                this->heap = heap;
+                this->freeList = new Memory::FreeList<DurableQueueNode<T> *>();
+                this->allocList = new std::vector<DurableQueueNode<T> *>();
 
+                // Initialize allocList
+                int allocSz = 0;
+                while (allocSz + sizeof(DurableQueueNode<T>) < sz) {
+                    this->allocList->push_back(new (heap + allocSz) DurableQueueNode<T>());
+                    allocSz += sizeof(DurableQueueNode<T>);
+                }
+                
+                // Initialize freeList
+                for (auto node : *allocList) {
+                    freeList->push(node);
+                }
+                
+                // Initialize return value array
+                for (T& retval : retvals) {
+                    retval = NilT;
+                }
+
+                // Initialize head and tail with dummy node
+                T tmp = NilT;
+                DurableQueueNode<T> *dummy = new DurableQueueNode<T>(tmp);
+                this->head = dummy;
+                this->tail = dummy;
             }
-            
+
         private: 
+            // Persistent head of queue
+            Memory::DWord::ABAPtr<DurableQueueNode<T>> head;
+            // Persistent tail of queue
+            Memory::DWord::ABAPtr<DurableQueueNode<T>> tail;
+            // Persistent array of return values for threads
+            T retvals[DQ_MAX_THREADS];
             // Transient remaining portion of heap
             uint8_t *heap;
             // Transient FreeList
-            Memory::FreeList<DurableQueueNode<T>*> freeList;
+            Memory::FreeList<DurableQueueNode<T>*> *freeList;
             // Transient AllocList
-            std::vector<DurableQueueNode<T>*> allocList;                        
+            std::vector<DurableQueueNode<T>*>* allocList;                        
     };
 
     template <class T>
-    static DurableQueue<T> alloc(void *heap) {
-        return new (heap) DurableQueue<T>(heap);
+    static DurableQueue<T> *alloc(uint8_t *heap, size_t sz) {
+        return new (heap) DurableQueue<T>(heap + sizeof(DurableQueue<T>), sz - sizeof(DurableQueue<T>));
     }
 }
