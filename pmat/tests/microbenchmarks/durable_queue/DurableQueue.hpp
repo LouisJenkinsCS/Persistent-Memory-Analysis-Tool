@@ -11,6 +11,8 @@
 #include <random>
 #include "HazardPointers.hpp"
 
+// TODO: Use PMAT to synthesize durable linearizable data structure!
+
 #define DQ_MAX_THREADS 16
 
 namespace DurableQueue
@@ -216,14 +218,16 @@ namespace DurableQueue
         template <class T, T NilT = T()>
         class FreeListNode {
             public:
-                FreeListNode(T t) : obj(t), next(nullptr) {}
-                FreeListNode() : obj(NilT), next(nullptr) {}
+                FreeListNode(T t) : obj(t), next(nullptr), freeNext(nullptr), allocNext(nullptr) {}
+                FreeListNode() : obj(NilT), next(nullptr), freeNext(nullptr), allocNext(nullptr) {}
                 
                 template <class R>
                 friend std::ostream& operator<<(std::ostream& os, FreeListNode<R>*  freeList);
             
                 T obj;
                 FreeListNode<T> *next;
+                FreeListNode<T> *freeNext;
+                FreeListNode<T> *allocNext;
         };
 
         template <class T>
@@ -242,8 +246,10 @@ namespace DurableQueue
         template <class T, T NilT = T()>
         class FreeList {
             public:
+                FreeList() : allocHead(nullptr) {}
                 void push(T t) {
-                    FreeListNode<T> *node = new FreeListNode<T>(t);
+                    FreeListNode<T> *node = get_node();
+                    node->obj = t;
                     Memory::DWord::ABA<FreeListNode<T>> _head;
                     do {
                         _head = head.load();
@@ -261,11 +267,52 @@ namespace DurableQueue
                         }
                         next = _head->next;
                     } while(!head.CAS(_head, next));
-                    return _head->obj; // Note this leaks!
+                    T retval = _head->obj;
+                    put_node(_head.to_ptr());
+                    return retval; // Note this leaks!
                 }
 
             private:
+                FreeListNode<T> *alloc_node() {
+                    auto ret = new FreeListNode<T>();
+                    FreeListNode<T> *_head;
+                    do {
+                        _head = allocHead.load();
+                        ret->allocNext = _head;
+                    } while(!allocHead.compare_exchange_strong(_head, ret));
+                    return ret;
+                }
+
+                FreeListNode<T> *get_node() {
+                    // Check if we can pull one from freeList
+                    Memory::DWord::ABA<FreeListNode<T>> _head;
+                    FreeListNode<T> *next;
+                    do {
+                        _head = freeHead.load();
+                        if (_head.to_ptr() == nullptr) {
+                            return alloc_node();
+                        }
+                        next = _head->freeNext;
+                    } while (!freeHead.CAS(_head, next));
+                    _head->freeNext = nullptr;
+                    return _head.to_ptr();
+                }
+
+                void put_node(FreeListNode<T> *node) {
+                    Memory::DWord::ABA<FreeListNode<T>> _head;
+                    do {
+                        _head = freeHead.load();
+                        node->freeNext = _head.to_ptr();
+                    } while(!freeHead.CAS(_head, node));
+                }
+
+               // Head of FreeList (Treiber Stack)
                Memory::DWord::ABAPtr<FreeListNode<T>> head;
+               // FreeList for FreeList
+               Memory::DWord::ABAPtr<FreeListNode<T>> freeHead;
+               // AllocList for FreeList
+               std::atomic<FreeListNode<T>*> allocHead;
+               
         };
     }
     
@@ -279,7 +326,7 @@ namespace DurableQueue
             friend std::ostream& operator<<(std::ostream& os, DurableQueueNode<R, NilR> *node);
 
             T obj;
-            Memory::DWord::ABAPtr<DurableQueueNode<T, NilT>> next;
+            std::atomic<DurableQueueNode<T, NilT>*> next;
             std::atomic<int> deqThreadID;
     };
 
@@ -288,7 +335,7 @@ namespace DurableQueue
         if (node == nullptr) {
             os << "[NULL]";
         } else {
-            os << "(.obj=" << node->obj << ", .next=" << reinterpret_cast<void *>(node->next.load().to_ptr()) << ", .deqThreadID=" << node->deqThreadID << ")";
+            os << "(.obj=" << node->obj << ", .next=" << reinterpret_cast<void *>(node->next.load()) << ", .deqThreadID=" << node->deqThreadID << ")";
         }
         return os;
     }
@@ -332,10 +379,6 @@ namespace DurableQueue
                 );
             }
 
-            size_t size() {
-                return head.load().get_seq() - tail.load().get_seq();
-            }
-
             bool enqueue(T t, int tid) {
                 DurableQueueNode<T, NilT> *node = freeList->pop();
                 if (!node) return false;
@@ -348,19 +391,19 @@ namespace DurableQueue
                 int backoffTime = 1;
                 int timesBackedOff = 0;
                 while (true) {
-                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> last = tail.load();
-                    hazardPtrs->protectPtr(0, last.to_ptr(), tid);
-                    assert(last.to_ptr() != nullptr);
-                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> next = last.to_ptr()->next.load();
+                    auto last = tail.load();
+                    hazardPtrs->protectPtr(0, last, tid);
+                    assert(last != nullptr);
+                    auto next = last->next.load();
                     if (last == tail.load()) {
-                        if (next.to_ptr() == nullptr) {
-                            if (last.to_ptr()->next.CAS(next, node)) {
-                                tail.CAS(last, node);
+                        if (next == nullptr) {
+                            if (last->next.compare_exchange_strong(next, node)) {
+                                tail.compare_exchange_strong(last, node);
                                 return true;
                             }
                         } else {
-                            assert(last.to_ptr() != next.to_ptr());
-                            tail.CAS(last, next.to_ptr());
+                            assert(last != next);
+                            tail.compare_exchange_strong(last, next);
                         }
                     }
 
@@ -378,7 +421,8 @@ namespace DurableQueue
                 return true;
             }
 
-            // Sanity checking...
+            // Sanity checking the freeList. In Friedman's original design, I would obtain many, _many_, **many**
+            // unusual cases where I would have the same node appear more than once on the freeList, creating cycles.
             void sanity() {
                 auto node = this->freeList->pop();
                 std::set<DurableQueueNode<T, NilT>*> s;
@@ -396,44 +440,33 @@ namespace DurableQueue
                 retvals[tid] = NilT;
 
                 while(true) {
-                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> _head = head.load();
-                    hazardPtrs->protectPtr(0, _head.to_ptr(), tid);
-                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> _tail = tail.load();
+                    auto _head = head.load();
+                    hazardPtrs->protectPtr(0, _head, tid);
+                    auto _tail = tail.load();
                     if (head.load() != _head) {
                         continue;
                     }
 
-                    Memory::DWord::ABA<DurableQueueNode<T, NilT>> next = _head.to_ptr()->next.load();
-                    hazardPtrs->protectPtr(1, next.to_ptr(), tid);
+                    auto next = _head->next.load();
                     if (head.load() != _head) {
                         std::this_thread::yield();
                         continue;
                     }
                     if (_head == _tail) {
-                        if (next.to_ptr() == nullptr) {
+                        if (next == nullptr) {
                             retvals[tid] = EmptyT;
                             hazardPtrs->clearOne(0, tid);
                             hazardPtrs->clearOne(1, tid);
                             return EmptyT;
                         } else {
-                            tail.CAS(_tail, next.to_ptr());
+                            tail.compare_exchange_strong(_tail, next);
                         }
                     } else {
-                        T retval = next.to_ptr()->obj;
+                        T retval = next->obj;
                         int expectedID = -1;
-                        if (next.to_ptr()->deqThreadID.compare_exchange_strong(expectedID, tid)) {
-                            retvals[tid] = retval;
-                            head.CAS(_head, next.to_ptr());head.CAS(_head, next.to_ptr());
-                            hazardPtrs->retire(_head.to_ptr(), tid);
-                            // hazardPtrs->clearOne(1, tid);
+                        if (head.compare_exchange_strong(_head, next)) {
+                            hazardPtrs->retire(_head, tid);
                             return retval;
-                        } else {
-                            assert(expectedID != -1);
-                            T& address = retvals[expectedID];
-                            if (head.load() == _head) {
-                                address = retval;
-                                head.CAS(_head, next.to_ptr());
-                            }
                         }
                     }
                     std::this_thread::yield();
@@ -445,9 +478,9 @@ namespace DurableQueue
 
         private: 
             // Persistent head of queue
-            Memory::DWord::ABAPtr<DurableQueueNode<T, NilT>> head;
+            std::atomic<DurableQueueNode<T, NilT>*> head;
             // Persistent tail of queue
-            Memory::DWord::ABAPtr<DurableQueueNode<T, NilT>> tail;
+            std::atomic<DurableQueueNode<T, NilT>*> tail;
             // Persistent array of return values for threads
             T retvals[DQ_MAX_THREADS];
             // Transient remaining portion of heap
@@ -463,12 +496,12 @@ namespace DurableQueue
     // Note: Not thread safe...
     template <class T, T EmptyT, T NilT>
     std::ostream& operator<<(std::ostream& os, DurableQueue<T, EmptyT, NilT> *dq) {
-        DurableQueueNode<T, NilT> *head = dq->head.load().to_ptr();
-        DurableQueueNode<T, NilT> *tail = dq->tail.load().to_ptr();
+        DurableQueueNode<T, NilT> *head = dq->head.load();
+        DurableQueueNode<T, NilT> *tail = dq->tail.load();
         os << "{ ";
         while (head != tail) {
-            os << head->next.load().to_ptr() << " ";
-            head = head->next.load().to_ptr();
+            os << head->next.load() << " ";
+            head = head->next.load();
         }
         os << "}";
         return os;

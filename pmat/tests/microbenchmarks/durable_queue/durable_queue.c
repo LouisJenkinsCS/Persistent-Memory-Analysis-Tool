@@ -2,6 +2,7 @@
 #include <valgrind/pmat.h>
 #include <assert.h>
 #include <stddef.h>
+#include <omp.h>
 #include <string.h>
 #include <stdio.h>
 #include "hazard.h"
@@ -57,12 +58,22 @@ void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) T
 }
 
 void DurableQueue_free(struct DurableQueueNode *node, struct DurableQueue *dq) TRANSIENT {
+	static atomic_uintptr_t last_node = 0;
+	static atomic_uintptr_t last_thread = -1;
+	int lasttid = atomic_load(&last_thread);
+	if (atomic_load(&last_node) == node) {
+		uintptr_t tmp = atomic_load(&last_node);
+		if (tmp == node) {
+			printf("CALLED TWICE!!!Current thread is %ld but last thread was %ld!\n", omp_get_thread_num(), lasttid);
+			assert(0);
+		}
+	}
 	atomic_store(&node->free_list_next, 0);
 	atomic_store(&node->next, 0);
 	FLUSH(&node->next);
 	node->value = -1;
 	FLUSH(&node->value);
-	atomic_store(&node->deqThreadID, -1);
+	atomic_store(&node->deqThreadID, -2);
 	FLUSH(&	node->deqThreadID);
 	struct DurableQueueNode *head = 0;
 	do {
@@ -74,6 +85,8 @@ void DurableQueue_free(struct DurableQueueNode *node, struct DurableQueue *dq) T
 		assert(head != (uintptr_t) node);
 		atomic_store(&node->free_list_next, head);
 	} while(!atomic_compare_exchange_strong(&dq->free_list, &head, (uintptr_t) node));
+	atomic_store(&last_node, node);
+	atomic_store(&last_thread, omp_get_thread_num());
 }
 
 // Currently, this data structure expects an _entire_ region of "persistent" memory
@@ -326,33 +339,12 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				int retval = next->value;
 				assert(retval != -1);
 				assert(next->free_list_next == 0);
+				assert(tid != -1);
 				int_least64_t expected_tid = -1;
-				// Attempt to claim this queue node as our own
-				if (atomic_compare_exchange_strong(&next->deqThreadID, &expected_tid, tid)) {
-					// Paper does FLUSH(&first->next->deqThreadID) instead of just flushing &next->deqThreadID...
-					struct DurableQueueNode *tmp = atomic_load(&first->next);
-					FLUSH(&tmp->deqThreadID);
-					dq->returnedValues[tid] = retval;
-					FLUSH(&dq->returnedValues[tid]);
-					atomic_compare_exchange_strong(&dq->head, &first, (uintptr_t) next);
-					// FLUSH(&dq->head);
-					post_dequeue(dq);
+				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
+					FLUSH(&dq->head);
 					hazard_release(first, true);
-					hazard_release(next, false);
 					return retval;
-				} else {
-					// Help push their operation along...
-					int *address = &dq->returnedValues[atomic_load(&next->deqThreadID)];
-					if (atomic_load(&dq->head) == (uintptr_t) first) {
-						// The owning thread has not yet pushed progress forward
-						struct DurableQueueNode *tmp = atomic_load(&first->next);
-						FLUSH(&tmp->deqThreadID);
-						*address = retval;
-						FLUSH(address);
-						atomic_compare_exchange_strong(&dq->head, &first, (uintptr_t) next);
-						// Needed, despite not being mentioned in the paper.
-						// FLUSH(&dq->head);
-					}
 				}
 			}
 		}

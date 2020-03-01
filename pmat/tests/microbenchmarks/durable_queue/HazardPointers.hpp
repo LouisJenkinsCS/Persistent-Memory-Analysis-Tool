@@ -32,7 +32,10 @@
 #include <atomic>
 #include <vector>
 #include <iostream>
+#include <functional>
 
+template <class T>
+void defaultDelete(T *arg) { delete arg; }
 
 template<typename T>
 class HazardPointers {
@@ -50,9 +53,10 @@ private:
     std::atomic<T*>*      hp[HP_MAX_THREADS];
     // It's not nice that we have a lot of empty vectors, but we need padding to avoid false sharing
     std::vector<T*>       retiredList[HP_MAX_THREADS*CLPAD];
+    std::function<void(T*)> deleteFn;
 
 public:
-    HazardPointers(int maxHPs=HP_MAX_HPS, int maxThreads=HP_MAX_THREADS) : maxHPs{maxHPs}, maxThreads{maxThreads} {
+    HazardPointers(std::function<void(T*)> deleteFn = defaultDelete, int maxThreads=HP_MAX_THREADS, int maxHPs=HP_MAX_HPS) : deleteFn(deleteFn), maxHPs{maxHPs}, maxThreads{maxThreads} {
         for (int ithread = 0; ithread < HP_MAX_THREADS; ithread++) {
             hp[ithread] = new std::atomic<T*>[CLPAD*2]; // We allocate four cache lines to allow for many hps and without false sharing
             for (int ihp = 0; ihp < HP_MAX_HPS; ihp++) {
@@ -63,10 +67,11 @@ public:
 
     ~HazardPointers() {
         for (int ithread = 0; ithread < HP_MAX_THREADS; ithread++) {
-            delete[] hp[ithread];
+            for (auto *hp : hp[ithread]) deleteFn(hp);
+
             // Clear the current retired nodes
             for (unsigned iret = 0; iret < retiredList[ithread*CLPAD].size(); iret++) {
-                delete retiredList[ithread*CLPAD][iret];
+                deleteFn(retiredList[ithread*CLPAD][iret]);
             }
         }
     }
@@ -144,7 +149,7 @@ public:
             }
             if (canDelete) {
                 retiredList[tid*CLPAD].erase(retiredList[tid*CLPAD].begin() + iret);
-                delete obj;
+                deleteFn(obj);
                 continue;
             }
             iret++;

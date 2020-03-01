@@ -30,7 +30,7 @@ int main(void) {
         } 
         std::cout << "Dequeue Redux: " << redux << std::endl;
         std::cout << dq << std::endl;
-        // dq->sanity();
+        dq->sanity();
 
     }
     std::cout << "Done!" << std::endl;

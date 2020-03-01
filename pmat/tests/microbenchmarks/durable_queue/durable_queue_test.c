@@ -15,7 +15,9 @@
 #include <stdatomic.h>
 
 // Size is N + 1 as we need space for the sentinel node
+#ifndef N
 #define N (1024 * 1024)
+#endif
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 // Sanity Check to determine whether or not the queue is working...

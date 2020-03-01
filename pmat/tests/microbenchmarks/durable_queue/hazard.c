@@ -158,7 +158,7 @@ static void init_tls_hp(void) {
 	}
 	
 	struct hazard *hp = create();
-	hp->id = index++;
+	hp->id = __sync_fetch_and_add(&index, 1);
 	struct hazard *old_head;
 	do {
 		old_head = hazard_table->head;
@@ -192,7 +192,7 @@ bool hazard_release_all(bool retire) {
 				cvector_push_back(hp->retired, data);				
 				if (cvector_size(hp->retired) >= HAZARDS_PER_THREAD) {
 					scan(hp);					
-					help_scan(hp);
+					// help_scan(hp);
 				}
 			}
 		}
@@ -215,7 +215,7 @@ bool hazard_release(void *data, bool retire) {
 				cvector_push_back(hp->retired, data);
 				if (cvector_size(hp->retired) >= HAZARDS_PER_THREAD) {
 					scan(hp);
-					help_scan(hp);
+					// help_scan(hp);
 				}
 			}
 			break;
