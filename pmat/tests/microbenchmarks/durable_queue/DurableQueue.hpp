@@ -14,6 +14,8 @@
 // TODO: Use PMAT to synthesize durable linearizable data structure!
 
 #define DQ_MAX_THREADS 16
+#define DQ_FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr));
+
 
 namespace DurableQueue
 {
@@ -377,6 +379,7 @@ namespace DurableQueue
                 this->hazardPtrs = new HazardPointers<DurableQueueNode<T, NilT>>(
                     [this](DurableQueueNode<T, NilT> *node) { this->freeList->push(node); }, DQ_MAX_THREADS
                 );
+                this->recoverable = true;
             }
 
             bool enqueue(T t, int tid) {
@@ -389,7 +392,6 @@ namespace DurableQueue
 
                 // Randomized backoff...
                 int backoffTime = 1;
-                int timesBackedOff = 0;
                 while (true) {
                     auto last = tail.load();
                     hazardPtrs->protectPtr(0, last, tid);
@@ -410,12 +412,6 @@ namespace DurableQueue
                     std::chrono::nanoseconds backoff(std::rand() % backoffTime);
                     std::this_thread::sleep_for(backoff);
                     backoff *= 2;
-                    timesBackedOff++;
-                    if (timesBackedOff > 10) {
-                        std::cerr << "Thread " << std::this_thread::get_id() << " has backed off " << timesBackedOff << " times!" << std::endl;
-                        std::cerr << "Tail = " << tail.load() << ", last == " << last << "..." << std::endl;
-                        // sanity();
-                    }
                 }
 
                 return true;
@@ -434,6 +430,50 @@ namespace DurableQueue
                     node = this->freeList->pop();
                 }
                 for (auto n : s) this->freeList->push(n);
+            }
+
+            // Attempts to recover the current queue from intermediate state; resets all transient variables
+            bool recover(uint8_t *heap, size_t sz) {
+                if (!this->recoverable) return false;
+                intptr_t off = heap - this->heap;
+                this->heap = heap;
+                this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
+                this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
+
+                // Initialize allocList
+                int allocSz = 0;
+                while (allocSz + sizeof(DurableQueueNode<T, NilT>) < sz) {
+                    this->allocList->push_back(reinterpret_cast<DurableQueueNode<T, NilT>*>(heap + allocSz));
+                    allocSz += sizeof(DurableQueueNode<T, NilT>);
+                }
+
+                // Initialize freeList based on what is reachable in the queue...
+                std::set<DurableQueueNode<T, NilT>*> reachable;
+                // Repair queue by redirecting pointers
+                this->head.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
+                this->tail.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
+                for (DurableQueueNode<T, NilT> *node = this->head.load(); node != NULL; node = node->next.load()) {
+                    reachable.insert(node);
+                    if (node->next.load()) {
+                        node->next.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
+                    }
+
+                    // Update `tail` that is set lazily...
+                    if (node->next.load() == NULL) {
+                        this->tail.write(node);
+                        break;
+                    }
+                }
+
+                // Add non-reachable nodes to freeList
+                for (DurableQueueNode<T, NilT> *node : *this->allocList) {
+                    int cnt = reachable.count(node);
+                    assert(cnt <= 1);
+                    if (cnt == 0) {
+                        // Not reachable, add to freeList
+                        this->freeList->push(node);
+                    }
+                }
             }
 
             T dequeue(int tid) {
@@ -482,7 +522,9 @@ namespace DurableQueue
             // Persistent tail of queue
             std::atomic<DurableQueueNode<T, NilT>*> tail;
             // Persistent array of return values for threads
-            T retvals[DQ_MAX_THREADS];
+            T retvals[DQ_MAX_THREADS]; // NOTE: Currently unused until Friedman's Queue design works...
+            // Persistent flag to determine if its worth recovering from (i.e. has been initialized)
+            bool recoverable;
             // Transient remaining portion of heap
             uint8_t *heap;
             // Transient FreeList
@@ -490,7 +532,7 @@ namespace DurableQueue
             // Transient AllocList
             std::vector<DurableQueueNode<T, NilT>*>* allocList;
             // Transient HazardPointers
-            HazardPointers<DurableQueueNode<T, NilT>>* hazardPtrs;          
+            HazardPointers<DurableQueueNode<T, NilT>>* hazardPtrs;
     };
 
     // Note: Not thread safe...
@@ -510,5 +552,11 @@ namespace DurableQueue
     template <class T, T EmptyT, T NilT = T()>
     static DurableQueue<T, EmptyT, NilT> *alloc(uint8_t *heap, size_t sz) {
         return new (heap) DurableQueue<T, EmptyT, NilT>(heap + sizeof(DurableQueue<T, EmptyT, NilT>), sz - sizeof(DurableQueue<T, EmptyT, NilT>));
+    }
+
+    template <class T, T EmptyT, T NilT = T()>
+    static DurableQueue<T, EmptyT, NilT> *recover(uint8_t *heap, size_t sz) {
+        DurableQueue<T, EmptyT, NilT> *dq = reinterpret_cast<DurableQueue<T, EmptyT, NilT>*>(heap);
+        
     }
 }
