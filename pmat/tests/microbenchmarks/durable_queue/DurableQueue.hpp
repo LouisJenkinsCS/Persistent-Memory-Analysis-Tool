@@ -317,6 +317,12 @@ namespace DurableQueue
                
         };
     }
+
+    enum RecoveryStatus {
+        Uninitialized,
+        Initialized,
+        BadState
+    };
     
     template <class T, T NilT = T()>
     class DurableQueueNode {
@@ -401,6 +407,7 @@ namespace DurableQueue
                         if (next == nullptr) {
                             if (last->next.compare_exchange_strong(next, node)) {
                                 tail.compare_exchange_strong(last, node);
+                                numEnqueues += 1;
                                 return true;
                             }
                         } else {
@@ -433,8 +440,8 @@ namespace DurableQueue
             }
 
             // Attempts to recover the current queue from intermediate state; resets all transient variables
-            bool recover(uint8_t *heap, size_t sz) {
-                if (!this->recoverable) return false;
+            RecoveryStatus recover(uint8_t *heap, size_t sz) {
+                if (!this->recoverable) return Uninitialized;
                 intptr_t off = heap - this->heap;
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
@@ -450,17 +457,17 @@ namespace DurableQueue
                 // Initialize freeList based on what is reachable in the queue...
                 std::set<DurableQueueNode<T, NilT>*> reachable;
                 // Repair queue by redirecting pointers
-                this->head.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
-                this->tail.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
+                this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
+                this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
                 for (DurableQueueNode<T, NilT> *node = this->head.load(); node != NULL; node = node->next.load()) {
                     reachable.insert(node);
                     if (node->next.load()) {
-                        node->next.write(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
+                        node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
                     }
 
                     // Update `tail` that is set lazily...
                     if (node->next.load() == NULL) {
-                        this->tail.write(node);
+                        this->tail.store(node);
                         break;
                     }
                 }
@@ -473,6 +480,13 @@ namespace DurableQueue
                         // Not reachable, add to freeList
                         this->freeList->push(node);
                     }
+                }
+
+                // Number of enqueues - number of dequeues should be within DQ_MAX_THREADS of reachable nodes.
+                if (reachable.size() + DQ_MAX_THREADS > (this->numEnqueues - this->numDequeues) && (this->numEnqueues - this->numDequeues) > reachable.size() - DQ_MAX_THREADS) {
+                    return Initialized;
+                } else {
+                    return BadState;
                 }
             }
 
@@ -506,6 +520,7 @@ namespace DurableQueue
                         int expectedID = -1;
                         if (head.compare_exchange_strong(_head, next)) {
                             hazardPtrs->retire(_head, tid);
+                            numDequeues += 1;
                             return retval;
                         }
                     }
@@ -525,6 +540,10 @@ namespace DurableQueue
             T retvals[DQ_MAX_THREADS]; // NOTE: Currently unused until Friedman's Queue design works...
             // Persistent flag to determine if its worth recovering from (i.e. has been initialized)
             bool recoverable;
+            // Persistent number of enqueue and dequeue operations
+            // These counters should never be behind each by DQ_MAX_THREADS
+            std::atomic<size_t> __attribute__ ((aligned (64))) numEnqueues;
+            std::atomic<size_t> __attribute__ ((aligned (64))) numDequeues;
             // Transient remaining portion of heap
             uint8_t *heap;
             // Transient FreeList
@@ -557,6 +576,13 @@ namespace DurableQueue
     template <class T, T EmptyT, T NilT = T()>
     static DurableQueue<T, EmptyT, NilT> *recover(uint8_t *heap, size_t sz) {
         DurableQueue<T, EmptyT, NilT> *dq = reinterpret_cast<DurableQueue<T, EmptyT, NilT>*>(heap);
-        return dq;
+        RecoveryStatus status = dq->recover(heap, sz);
+        if (status == Uninitialized) {
+            return alloc<T, EmptyT, NilT>(heap, sz);
+        } else if (status == Initialized) {
+            return dq;
+        } else {
+            return nullptr;
+        }
     }
 }
