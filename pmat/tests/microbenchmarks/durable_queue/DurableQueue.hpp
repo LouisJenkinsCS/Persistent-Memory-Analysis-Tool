@@ -321,8 +321,8 @@ namespace DurableQueue
     template <class T, T NilT = T()>
     class DurableQueueNode {
         public:
-            DurableQueueNode() : obj(NilT), deqThreadID(-1) {}
-            DurableQueueNode(T& t) : obj(t), deqThreadID(-1) {}
+            DurableQueueNode() : obj(NilT), deqThreadID(-1), next(nullptr) {}
+            DurableQueueNode(T& t) : obj(t), deqThreadID(-1), next(nullptr) {}
 
             template <class R, R NilR>
             friend std::ostream& operator<<(std::ostream& os, DurableQueueNode<R, NilR> *node);
@@ -557,6 +557,6 @@ namespace DurableQueue
     template <class T, T EmptyT, T NilT = T()>
     static DurableQueue<T, EmptyT, NilT> *recover(uint8_t *heap, size_t sz) {
         DurableQueue<T, EmptyT, NilT> *dq = reinterpret_cast<DurableQueue<T, EmptyT, NilT>*>(heap);
-        
+        return dq;
     }
 }

@@ -39,9 +39,17 @@ typedef
        VG_USERREQ__PMC_PMAT_CRASH_ENABLE,
        VG_USERREQ__PMC_PMAT_TRANSIENT,
        VG_USERREQ__PMC_PMAT_IS_PERSIST,
-       VG_USERREQ__PMC_PMAT_PERSIST_ORDER
+       VG_USERREQ__PMC_PMAT_PERSIST_ORDER,
+       VG_USERREQ__PMC_PMAT_REGISTER_WITH_FN
    } Vg_pmatClientRequest;
 
+
+/*
+    Expected type for verification callbacks. These callbacks, if they exist, _should_
+    not make any system calls (so no stderr or stdout) and should be non-blocking; this
+    is called inside of a fork.
+*/
+typedef int (*pmat_verify_fn)(void *buf, size_t size);
 
 /* 
     Return value that should be used to signify a failure; differentiates
@@ -68,10 +76,15 @@ typedef
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_FORCE_SIMULATE_CRASH,  \
                                     0, 0, 0, 0, 0)
 
-/** Register a verification function to a particular mapping */
+/** Register a persistent region */
 #define PMAT_REGISTER(_qzz_name, _qzz_addr, _qzz_size) \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_REGISTER, \
             (_qzz_name), (_qzz_addr), (_qzz_size), 0, 0)
+
+/** Register a verification function to a region. */
+#define PMAT_REGISTER_WITH_FN(_qzz_name, _qzz_addr, _qzz_size, _qzz_fn) \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_REGISTER_WITH_FN, \
+            (_qzz_name), (_qzz_addr), (_qzz_size), (_qzz_fn), 0)
 
 #define PMAT_UNREGISTER_BY_NAME(_qzz_name) \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_UNREGISTER_BY_NAME, \

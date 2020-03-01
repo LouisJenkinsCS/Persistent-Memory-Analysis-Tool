@@ -1,6 +1,7 @@
 #ifndef PMAT_INCLUDE_H
 #define PMAT_INCLUDE_H
 
+#include "pmat.h"
 /*
     Dependency Graph used to declare ordering constraints between memory locations.
 */
@@ -27,6 +28,7 @@ struct pmat_registered_file {
     Addr addr; 
     UWord size;
     Addr mmap_addr;
+    pmat_verify_fn verify_fn;
 };
 
 struct pmat_writeback_buffer_entry {

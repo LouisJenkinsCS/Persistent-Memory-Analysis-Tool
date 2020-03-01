@@ -150,18 +150,31 @@ static void stringify_stack_trace(ExeContext *context, int fd);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
 
 static void sem_init(void) {
+    // When running serially, this becomes a no-op
+    if (pmem.pmat_num_procs == 1) {
+        return;
+    }
     struct vki_sembuf sops = {0};
     sops.sem_op = 1;
     VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
 }
 
+
 static void sem_acquire(void) {
+    // When running serially, this becomes a no-op
+    if (pmem.pmat_num_procs == 1) {
+        return;
+    }    
     struct vki_sembuf sops = {0};
     sops.sem_op = -1;
     VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
 }
 
 static void sem_release(void) {
+    // When running serially, this becomes a no-op
+    if (pmem.pmat_num_procs == 1) {
+        return;
+    }
     struct vki_sembuf sops = {0};
     sops.sem_op = 1;
     VG_(semop)(pmem.pmat_shm_times->sem_id, &sops, 1);
@@ -555,6 +568,14 @@ static void copy_file(const char *f1, const char *f2) {
     exec("/bin/cp", args);
 }
 
+static void call_verifiers() {
+    VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
+    struct pmat_registered_file *tmp;
+    while ((tmp = VG_(OSetGen_Next)(pmem.pmat_registered_files))) {
+        tmp->verify_fn(tmp->mmap_addr, tmp->size);
+    }
+}
+
 static void copy_files(const char *suffix) {
     VG_(OSetGen_ResetIter)(pmem.pmat_registered_files);
     struct pmat_registered_file *tmp;
@@ -648,6 +669,8 @@ static void simulate_crash(void) {
     if (pid1 != 0) {
         // Parent should continue execution...
     } else {
+        call_verifiers();
+
         // Child should create grandchild to run actual verification program
         // and monitor grandchild and report its time.
         Int pid = VG_(fork)();
@@ -771,6 +794,7 @@ static void maybe_simulate_crash(void) {
     }
 }
 
+
 /**
 * \brief Trace the given store if it was to any of the registered persistent
 *        memory regions.
@@ -849,6 +873,11 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
     maybe_simulate_crash();
 }
 
+static VG_REGPARM(3) void trace_pmem_store_dword(Addr addr, UWord value1, UWord value2) {
+    trace_pmem_store(addr, sizeofIRType(Ity_I64), value1);
+    trace_pmem_store(addr, sizeofIRType(Ity_I64), value2);
+}
+
 /**
 * \brief Register the entry of a new SB.
 *
@@ -914,7 +943,7 @@ static Bool
 const_needs_widen(IRAtom *e)
 {
     /* make sure this is a const */
-    tl_assert(e->tag == Iex_Const);
+    if (e->tag != Iex_Const) return False;
 
     switch (e->Iex.Const.con->tag) {
         case Ico_U1:
@@ -1140,6 +1169,54 @@ add_event_dw_guarded(IRSB *sb, IRAtom *daddr, Int dsize, IRAtom *guard,
     } else {
         VG_(umsg)("Unable to trace store - unsupported type of store 0x%x 0x%x\n",
                   value->tag, type);
+    }
+}
+
+/**
+* \brief Add a guarded write event for DWORD CAS. (BUGGED!)
+* \param[in,out] sb The IR superblock to which the expression belongs.
+* \param[in] daddr The expression with the address of the operation.
+* \param[in] dsize The size of the operation.
+* \param[in] guard The guard expression.
+* \param[in] value The expression with the value of the operation.
+*/
+static void
+add_event_dw_guarded_dword(IRSB *sb, IRAtom *daddr, Int dsize, IRAtom *guard,
+        IRAtom *value1, IRAtom *value2)
+{
+    static Bool reported = False;
+    tl_assert(isIRAtom(daddr));
+    tl_assert(isIRAtom(value1));
+    tl_assert(isIRAtom(value2));
+    tl_assert(dsize >= 1 && dsize <= MAX_DSIZE);
+
+    const HChar *helperName = "trace_pmem_store_dword";
+    void *helperAddr = trace_pmem_store_dword;
+    IRExpr **argv;
+    IRDirty *di;
+    IRType type1 = typeOfIRExpr(sb->tyenv, value1);
+    IRType type2 = typeOfIRExpr(sb->tyenv, value2);
+    tl_assert(value1->tag && value2->tag);
+    tl_assert(type1 == type2);
+    tl_assert2(type1 == Ity_I64, "Only support for CMPXCHG16B is supported for DWord CAS; needs 64-bit integer!"); 
+    tl_assert(value1->tag == value2->tag);
+
+    if (value1->tag == Iex_RdTmp && type1 == Ity_I64) {
+        /* handle the normal case */
+        argv = mkIRExprVec_3(daddr, const_needs_widen(value1) ? widen_const(value1) : value1, const_needs_widen(value2) ? widen_const(value2) : value2);
+        di = unsafeIRDirty_0_N(/*regparms*/3, helperName,
+                VG_(fnptr_to_fnentry)(helperAddr), argv);
+        if (guard) {
+            di->guard = guard;
+        }
+        // addStmtToIRSB(sb, IRStmt_Dirty(di));
+        if (!reported) {
+            VG_(emit)("Currently CMPXCHG16B is not supported for tracing!\n");
+            reported = True;
+        }        
+    } else {
+        tl_assert2(False, "Unable to trace store - unsupported type of store 0x%x:0x%x 0x%x\n",
+                  value1->tag, value2->tag, type1);
     }
 }
 
@@ -1489,6 +1566,7 @@ pmat_instrument(VgCallbackClosure *closure,
                 IRType type = typeOfIRExpr(tyenv, addr);
                 tl_assert(type != Ity_INVALID);
                 add_flush_event(sbOut, st->Ist.Flush.addr, st->Ist.Flush.fk == Ifk_flush);
+                break;
             }
 
             case Ist_MBE: {
@@ -1575,13 +1653,11 @@ pmat_instrument(VgCallbackClosure *closure,
                     xLo = make_expr(sbOut, loType, binop(opXor, cas->expdLo,
                             mkexpr(cas->oldLo)));
                     xHL = make_expr(sbOut, loType, binop(opOr, xHi, xLo));
+                    // Guard = (expectedHi == srcHi && expectedLo == srcLo)
                     IRAtom *guard = make_expr(sbOut, Ity_I1,
                             binop(opCasCmpEQ, xHL, zero));
-
-                    add_event_dw_guarded(sbOut, cas->addr, dataSize, guard,
-                            cas->dataLo);
-                    add_event_dw_guarded(sbOut, cas->addr + dataSize,
-                            dataSize, guard, cas->dataHi);
+                    add_event_dw_guarded_dword(sbOut, cas->addr, dataSize, guard,
+                            cas->dataLo, cas->dataHi);
                 } else {
                     IRAtom *guard = make_expr(sbOut, Ity_I1, binop(opCasCmpEQ,
                             cas->expdLo, mkexpr(cas->oldLo)));
@@ -1696,6 +1772,7 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             pmem.pmat_should_verify = False;
             break;
         }
+        case VG_USERREQ__PMC_PMAT_REGISTER_WITH_FN: 
         case VG_USERREQ__PMC_PMAT_REGISTER: {
             // TODO: Need to actually appropriately handle this under new model;
             // Should now only take an address; verification program should have
@@ -1721,6 +1798,9 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             file->addr = addr;
             file->size = size;
             file->name = name;
+            if (arg[0] == VG_USERREQ__PMC_PMAT_REGISTER_WITH_FN) {
+                file->verify_fn = arg[4];
+            }
             SysRes res = VG_(open)(file->name, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
             if (sr_isError(res)) {
                 VG_(emit)("Could not open file '%s'; errno: %ld\n", file->name, sr_Err(res));
