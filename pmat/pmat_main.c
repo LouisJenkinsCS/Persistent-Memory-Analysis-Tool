@@ -66,8 +66,6 @@
 static struct pmem_ops {
     /** Pipe between parent and child */
     Int pmat_pipe_fd[2];
-    /** Number of cores available for use. */
-    Int pmat_num_procs;
     /** Mappings of files addresses to their descriptors */
     OSet *pmat_registered_files;
     /* Entries in cache; TODO: Use a Pool */
@@ -86,6 +84,10 @@ static struct pmem_ops {
     Double pmat_eviction_prob;
     /** Probability of crash occurring... Defaults to 0.01. */
     Double pmat_crash_prob;
+    /** Number of cache entries... Defaults to 1024 * 1024 (64MBs of Cache) */
+    Word pmat_num_cache_entries;
+    /** Number of write-back reordering buffer entries... Defaults to 128 * 1024 (8MBs of Cache) */
+    Word pmat_num_wb_entries;
     /** Number of verifications that have been run so far. */
     Word num_verifications;
     /** Number of bad verifications. */
@@ -740,7 +742,7 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
 
         VG_(OSetGen_Insert)(pmem.pmat_cache_entries, new_entry);
         // Check if we need to evict...
-        if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > NUM_CACHE_ENTRIES) {
+        if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > pmem.pmat_num_cache_entries) {
             XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
             VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
             while ( (new_entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries)) ) {
@@ -1209,7 +1211,7 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
         wbentry->locOfFlush = NULL;
     }
     VG_(OSetGen_Insert)(pmem.pmat_writeback_buffer_entries, wbentry);
-    if (VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries) > NUM_WB_ENTRIES) {
+    if (VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries) > pmem.pmat_num_wb_entries) {
         XArray *arr = VG_(newXA)(VG_(malloc), "pmat_wb_eviction", VG_(free), sizeof(struct pmat_writeback_buffer_entry));  
         VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
         struct pmat_writeback_buffer_entry *tmp;
@@ -1797,11 +1799,12 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 static Bool
 pmat_process_cmd_line_option(const HChar *arg)
 {
-    pmem.pmat_crash_prob = 0;
-    pmem.pmat_eviction_prob = 0;
     if VG_STR_CLO(arg, "--verifier", pmem.pmat_verifier) {}
     else if VG_DBL_CLO(arg, "--eviction-probability", pmem.pmat_eviction_prob) {}
     else if VG_DBL_CLO(arg, "--crash-probability", pmem.pmat_crash_prob) {}
+    else if VG_INT_CLO(arg, "--num-cache-entries", pmem.pmat_num_cache_entries) {}
+    else if VG_INT_CLO(arg, "--num-wb-entries", pmem.pmat_num_wb_entries) {}
+    else if VG_INT_CLO(arg, "--rng-seed", pmem.pmat_rng_seed) {}
     else return False;
 
     return True;
@@ -1815,28 +1818,27 @@ static void
 pmat_post_clo_init(void)
 {
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
-            2 * NUM_CACHE_ENTRIES, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+            2 * pmem.pmat_num_cache_entries, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
-            4 * NUM_WB_ENTRIES, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
+            4 * pmem.pmat_num_wb_entries, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
     pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmat.main.cpci.-1", VG_(free));
-    pmem.pmat_num_procs = 0;
-    pmem.pmat_rng_seed = get_urandom();
-    if (pmem.pmat_crash_prob == 0) {
-        pmem.pmat_crash_prob = 0.01;
-    }
-    if (pmem.pmat_eviction_prob == 0) {
-        pmem.pmat_eviction_prob = 0.5;
-    }
-    
-    pmem.num_verifications = 0;
-    pmem.num_bad_verifications = 0;
-    pmem.min_verification_time = 0;
-    pmem.max_verification_time = 0;
-    pmem.ssd_verification_time = 0;
-    pmem.average_verification_time = 0;
+    VG_(emit)(
+        "Verifier = %s\n"
+        "Eviction Rate = %.0f%%\n"
+        "Crash Rate = %.0f%%\n"
+        "Simulated Processor Cache Capacity = %ld Entries\n"
+        "Write-Back Reordering Buffer Capacity = %ld Entries\n"
+        "RNG Seed = %x(%u)\n",
+        pmem.pmat_verifier,
+        pmem.pmat_eviction_prob * 100,
+        pmem.pmat_crash_prob * 100,
+        pmem.pmat_num_cache_entries,
+        pmem.pmat_num_wb_entries,
+        pmem.pmat_rng_seed, pmem.pmat_rng_seed
+    );
 }
 
 /**
@@ -1852,6 +1854,12 @@ pmat_print_usage(void)
             "                                      default [0.5]\n"
             "    --crash-probability=p             The probability of crash simulation\n"
             "                                      default [0.01]\n"
+            "    --num-cache-entries=N             The maximum number of entries in the cache\n"
+            "                                      default [1048576]\n"
+            "    --num-wb-entries=N                The maximum number of entries in the write-back reordering buffer\n"
+            "                                      default [131072]\n"
+            "    --rng-seed=N                      The value of RNG seed used when simulating a crash or evicting entries\n"
+            "                                      default [/dev/urandom]\n"
     );
 }
 
@@ -1947,6 +1955,18 @@ pmat_pre_clo_init(void)
     tl_assert(sizeof(Addr) == 8);
     tl_assert(sizeof(UWord) == 8);
     tl_assert(sizeof(Word) == 8);
+
+    pmem.num_verifications = 0;
+    pmem.num_bad_verifications = 0;
+    pmem.min_verification_time = 0;
+    pmem.max_verification_time = 0;
+    pmem.ssd_verification_time = 0;
+    pmem.average_verification_time = 0;
+    pmem.pmat_num_cache_entries = 1024 * 1024;
+    pmem.pmat_num_wb_entries = 128 * 1024;
+    pmem.pmat_crash_prob = 0.01;
+    pmem.pmat_eviction_prob = 0.1;
+    pmem.pmat_rng_seed = get_urandom();
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)

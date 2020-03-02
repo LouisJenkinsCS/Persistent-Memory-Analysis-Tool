@@ -248,7 +248,7 @@ namespace DurableQueue
         template <class T, T NilT = T()>
         class FreeList {
             public:
-                FreeList() : allocHead(nullptr) {}
+                FreeList() : allocHead(nullptr), freeHead(nullptr), head(nullptr) {}
                 void push(T t) {
                     FreeListNode<T> *node = get_node();
                     node->obj = t;
@@ -405,7 +405,6 @@ namespace DurableQueue
                 DQ_FLUSH(&node->deqThreadID);
                 DQ_FLUSH(&node->next);
                 DQ_FLUSH(&node->obj);
-                
 
                 // Randomized backoff...
                 int backoffTime = 1;
