@@ -103,12 +103,8 @@ int main(int argc, char **argv) {
     // Create my heap...
     uint8_t *buffer = reinterpret_cast<uint8_t*>(std::aligned_alloc(PMAT_CACHELINE_SIZE, size));
     assert(buffer != nullptr);
-    pmat_verify_fn fn = [](void *buf, size_t sz) { 
-        auto *dq = DurableQueue::recover<int, DQ_EMPTY, DQ_NULL>(reinterpret_cast<uint8_t *>(buf), sz);
-        if (dq == nullptr) return PMAT_VERIFICATION_FAILURE;
-        else return 0;
-    };
-    PMAT_REGISTER_WITH_FN("durable_queue.bin", buffer, size, fn);
+
+    PMAT_REGISTER("durable_queue.bin", buffer, size);
     auto dq = DurableQueue::alloc<int, DQ_EMPTY, DQ_NULL>(buffer, size);
     sanity_check(dq, numNodes);
     do_benchmark(dq, seconds);

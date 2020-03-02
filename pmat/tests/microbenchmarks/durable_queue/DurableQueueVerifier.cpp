@@ -28,6 +28,7 @@ int main(int argc, char *argv[]) {
     munmap(heap, sz);
 
     if (dq == NULL) {
+        std::cerr << "DurableQueue::recover returned nullptr!" << std::endl;
         // Failure!
         return PMAT_VERIFICATION_FAILURE;
     } else {

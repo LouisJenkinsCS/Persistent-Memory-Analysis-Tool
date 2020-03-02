@@ -664,34 +664,30 @@ static void simulate_crash(void) {
             if (pmem.pmat_shm_times->min_verification_time == 0) pmem.pmat_shm_times->min_verification_time = sec;
 
             // Check if child exited normally...
-            if (VKI_WIFEXITED(retval)) {
-                Int status = VKI_WEXITSTATUS(retval);
+            if (VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0) {
+                // Normal exit; delete .stdout and .stderr
+                char stderr_file[64];
+                char stdout_file[64];
 
-                // Abnormal exit; create dump + copy binary!
-                if (status != 0) {
-                    char dump_file[64];
-                    VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
-                    SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
-                    if (sr_isError(res)) {
-                        VG_(emit)("Could not open file '%s'; errno: %ld\n", dump_file, sr_Err(res));
-                        tl_assert(0);
-                    }
-                    dump_to_file(sr_Res(res));
-                    char bin_name[64];
-                    VG_(snprintf)(bin_name, 64, "%d", verif_num);
-                    copy_files(bin_name);
-                    pmem.pmat_shm_times->num_bad_verifications++;
-                } else {
-                    // Normal exit; delete .stdout and .stderr
-                    char stderr_file[64];
-                    char stdout_file[64];
-
-                    VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
-                    VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
-                    VG_(unlink)(stderr_file);
-                    VG_(unlink)(stdout_file);
+                VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
+                VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
+                VG_(unlink)(stderr_file);
+                VG_(unlink)(stdout_file);
+            } else {
+                char dump_file[64];
+                VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
+                SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+                if (sr_isError(res)) {
+                    VG_(emit)("Could not open file '%s'; errno: %ld\n", dump_file, sr_Err(res));
+                    tl_assert(0);
                 }
+                dump_to_file(sr_Res(res));
+                char bin_name[64];
+                VG_(snprintf)(bin_name, 64, "%d", verif_num);
+                copy_files(bin_name);
+                pmem.pmat_shm_times->num_bad_verifications++;
             } 
+            return;
         } else {
             // child...
             int numFiles = VG_(OSetGen_Size)(pmem.pmat_registered_files);

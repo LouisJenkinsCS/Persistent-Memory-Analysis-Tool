@@ -49,7 +49,7 @@ typedef
     not make any system calls (so no stderr or stdout) and should be non-blocking; this
     is called inside of a fork.
 */
-typedef int (*pmat_verify_fn)(void *buf, size_t size);
+typedef int (*pmat_verify_fn)(void *buf, unsigned long long size);
 
 /* 
     Return value that should be used to signify a failure; differentiates

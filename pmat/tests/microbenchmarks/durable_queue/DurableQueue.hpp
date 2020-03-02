@@ -14,7 +14,7 @@
 // TODO: Use PMAT to synthesize durable linearizable data structure!
 
 #define DQ_MAX_THREADS 16
-#define DQ_FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr));
+#define DQ_FLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr))
 
 
 namespace DurableQueue
@@ -327,8 +327,16 @@ namespace DurableQueue
     template <class T, T NilT = T()>
     class DurableQueueNode {
         public:
-            DurableQueueNode() : obj(NilT), deqThreadID(-1), next(nullptr) {}
-            DurableQueueNode(T& t) : obj(t), deqThreadID(-1), next(nullptr) {}
+            DurableQueueNode() : obj(NilT), deqThreadID(-1), next(nullptr) {
+                DQ_FLUSH(&obj);
+                DQ_FLUSH(&deqThreadID);
+                DQ_FLUSH(&next);
+            }
+            DurableQueueNode(T& t) : obj(t), deqThreadID(-1), next(nullptr) {
+                DQ_FLUSH(&obj);
+                DQ_FLUSH(&deqThreadID);
+                DQ_FLUSH(&next);
+            }
 
             template <class R, R NilR>
             friend std::ostream& operator<<(std::ostream& os, DurableQueueNode<R, NilR> *node);
@@ -394,6 +402,9 @@ namespace DurableQueue
                 node->deqThreadID = -1;
                 node->next = nullptr;
                 node->obj = t;
+                DQ_FLUSH(&node->deqThreadID);
+                DQ_FLUSH(&node->next);
+                DQ_FLUSH(&node->obj);
                 
 
                 // Randomized backoff...
@@ -406,8 +417,11 @@ namespace DurableQueue
                     if (last == tail.load()) {
                         if (next == nullptr) {
                             if (last->next.compare_exchange_strong(next, node)) {
+                                DQ_FLUSH(&last->next);
                                 tail.compare_exchange_strong(last, node);
+                                DQ_FLUSH(&tail);
                                 numEnqueues += 1;
+                                DQ_FLUSH(&numEnqueues);
                                 return true;
                             }
                         } else {
@@ -442,7 +456,9 @@ namespace DurableQueue
             // Attempts to recover the current queue from intermediate state; resets all transient variables
             RecoveryStatus recover(uint8_t *heap, size_t sz) {
                 if (!this->recoverable) return Uninitialized;
-                intptr_t off = heap - this->heap;
+                bool gt = heap > this->heap;
+                uintptr_t off = gt ? (heap - this->heap) : (this->heap - heap);
+                std::cout << "Old Heap: " << (void *) this->heap << ", New Heap: " << (void *) heap << ", Offset = " << off << std::endl;
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
                 this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
@@ -457,16 +473,40 @@ namespace DurableQueue
                 // Initialize freeList based on what is reachable in the queue...
                 std::set<DurableQueueNode<T, NilT>*> reachable;
                 // Repair queue by redirecting pointers
-                this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
-                this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
+                if (gt) {
+                    this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
+                    if (this->head.load()->next.load()) {
+                        this->head.load()->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t*>(this->head.load()->next.load()) + off));
+                    }
+                    this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
+                } else {
+                    this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) - off));
+                    if (this->head.load()->next.load()) {
+                        this->head.load()->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t*>(this->head.load()->next.load()) - off));
+                    }
+                    this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) - off));
+                }
+                
                 for (DurableQueueNode<T, NilT> *node = this->head.load(); node != NULL; node = node->next.load()) {
                     reachable.insert(node);
-                    if (node->next.load()) {
-                        node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
+                    if (node != this->head.load() && node->next.load()) {
+                        std::cout << "Node being processed: " << node << std::endl;
+                        if (gt) {
+                            node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
+                            std::cout << "Updated next to address: " << reinterpret_cast<void*>(node->next.load()) << std::endl;
+                        } else {
+                            node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) - off));
+                            std::cout << "Updated next to address: " << reinterpret_cast<void*>(node->next.load()) << std::endl;
+                        }
+                    }
+
+                    if (node->obj == NilT) {
+                        std::cerr << "Found a uninitialized NilT(" << NilT << ") value in a node!" << std::endl;
+                        return BadState;
                     }
 
                     // Update `tail` that is set lazily...
-                    if (node->next.load() == NULL) {
+                    if (node != this->head.load() && node->next.load() == NULL) {
                         this->tail.store(node);
                         break;
                     }
@@ -486,12 +526,14 @@ namespace DurableQueue
                 if (reachable.size() + DQ_MAX_THREADS > (this->numEnqueues - this->numDequeues) && (this->numEnqueues - this->numDequeues) > reachable.size() - DQ_MAX_THREADS) {
                     return Initialized;
                 } else {
+                    std::cerr << "Expected between " << reachable.size() - DQ_MAX_THREADS << " and " << reachable.size() + DQ_MAX_THREADS << " elements but found " << this->numEnqueues - this->numDequeues << std::endl;
                     return BadState;
                 }
             }
 
             T dequeue(int tid) {
                 retvals[tid] = NilT;
+                DQ_FLUSH(&retvals[tid]);
 
                 while(true) {
                     auto _head = head.load();
@@ -519,8 +561,10 @@ namespace DurableQueue
                         T retval = next->obj;
                         int expectedID = -1;
                         if (head.compare_exchange_strong(_head, next)) {
+                            DQ_FLUSH(&head);
                             hazardPtrs->retire(_head, tid);
                             numDequeues += 1;
+                            DQ_FLUSH(&numDequeues);
                             return retval;
                         }
                     }
