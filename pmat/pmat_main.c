@@ -76,6 +76,8 @@ static struct pmem_ops {
     Bool pmat_should_verify;
     /** Verification program */
     const HChar *pmat_verifier;
+    /** Whether or not a copy of the shadow region (binary) should be preserved on error. */
+    Bool pmat_preserve_bin_on_error;
     /** Set of addresses to ignore (marked transient) */
     OSet *pmat_transient_addresses; 
     /** Random Seed used for RNG. */
@@ -631,9 +633,11 @@ static void simulate_crash(void) {
                 tl_assert(0);
             }
             dump_to_file(sr_Res(res));
-            char bin_name[64];
-            VG_(snprintf)(bin_name, 64, "%d", verif_num);
-            copy_files(bin_name);
+            if (pmem.pmat_preserve_bin_on_error) {
+                char bin_name[64];
+                VG_(snprintf)(bin_name, 64, "%d", verif_num);
+                copy_files(bin_name);
+            }
             pmem.num_bad_verifications++;
         } 
         return;
@@ -1805,6 +1809,7 @@ pmat_process_cmd_line_option(const HChar *arg)
     else if VG_INT_CLO(arg, "--num-cache-entries", pmem.pmat_num_cache_entries) {}
     else if VG_INT_CLO(arg, "--num-wb-entries", pmem.pmat_num_wb_entries) {}
     else if VG_INT_CLO(arg, "--rng-seed", pmem.pmat_rng_seed) {}
+    else if VG_BOOL_CLO(arg, "--preserve-bin-on-error", pmem.pmat_preserve_bin_on_error) {}
     else return False;
 
     return True;
@@ -1860,6 +1865,7 @@ pmat_print_usage(void)
             "                                      default [131072]\n"
             "    --rng-seed=N                      The value of RNG seed used when simulating a crash or evicting entries\n"
             "                                      default [/dev/urandom]\n"
+            "    --preserve-bin-on-error           Preserve the copy of the shadow region alongside .stderr, .stdout, and .dump files.\n"
     );
 }
 
@@ -1967,6 +1973,7 @@ pmat_pre_clo_init(void)
     pmem.pmat_crash_prob = 0.01;
     pmem.pmat_eviction_prob = 0.1;
     pmem.pmat_rng_seed = get_urandom();
+    pmem.pmat_preserve_bin_on_error = False;
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)
