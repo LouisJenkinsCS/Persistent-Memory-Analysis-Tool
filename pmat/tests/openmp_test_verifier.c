@@ -18,7 +18,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define N (64)
+#ifndef N
+#define N (1024)
+#endif
 #define SIZE (N * sizeof(int))
 
 // Expects to be called like `./verifier 1 filename.bin`

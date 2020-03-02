@@ -9,7 +9,9 @@
 #include <valgrind/pmat.h>
 #include <assert.h>
 
-#define N 1024
+#ifndef N
+#define N (1024)
+#endif
 #define SIZE (N * sizeof(int))
 
 int main(int argc, char *argv[]) {

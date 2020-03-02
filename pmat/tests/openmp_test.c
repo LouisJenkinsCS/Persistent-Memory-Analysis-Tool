@@ -14,7 +14,9 @@
 #include <assert.h>
 #include <valgrind/pmat.h>
 
-#define N (64)
+#ifndef N
+#define N (1024)
+#endif
 #define SIZE (N * sizeof(int))
 
 int main(int argc, char *argv[]) {

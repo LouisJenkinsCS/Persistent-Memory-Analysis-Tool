@@ -1823,9 +1823,9 @@ static void
 pmat_post_clo_init(void)
 {
     pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
-            2 * pmem.pmat_num_cache_entries, (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
+            MAX(100, pmem.pmat_num_cache_entries), (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
-            4 * pmem.pmat_num_wb_entries, (SizeT) sizeof(struct pmat_writeback_buffer_entry));
+            MAX(100, pmem.pmat_num_wb_entries), (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
     pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
