@@ -264,55 +264,6 @@ Int VG_(read) ( Int fd, void* buf, Int count)
    return ret;
 }
 
-Int    VG_(semget)(vki_key_t key, Int nsems, Int semflg) {
-   Int ret;
-   #if defined(VGO_linux)
-   SysRes res = VG_(do_syscall3)(__NR_semget, key, nsems, semflg);
-   #else
-   #error Unknown OS
-   #endif
-   if (sr_isError(res)) {
-      ret = - (Int)(Word) sr_Err(res);
-      vg_assert(ret < 0);
-   } else {
-      ret = (Int)(Word) sr_Res(res);
-      vg_assert(ret >= 0);
-   }
-   return ret;
-}
-Int    VG_(semctl)(Int semid, Int semnum, Int cmd, ...) {
-   Int ret;
-   #if defined(VGO_linux)
-   SysRes res = VG_(do_syscall3)(__NR_semctl, semid, semnum, cmd);
-   #else
-   #error Unknown OS
-   #endif
-   if (sr_isError(res)) {
-      ret = - (Int)(Word) sr_Err(res);
-      vg_assert(ret < 0);
-   } else {
-      ret = (Int)(Word) sr_Res(res);
-      vg_assert(ret >= 0);
-   }
-   return ret;
-}
-Int    VG_(semop)(Int semid, struct vki_sembuf *sops, UWord nsops) {
-   Int ret;
-   #if defined(VGO_linux)
-   SysRes res = VG_(do_syscall3)(__NR_semop, semid, sops, nsops);
-   #else
-   #error Unknown OS
-   #endif
-   if (sr_isError(res)) {
-      ret = - (Int)(Word) sr_Err(res);
-      vg_assert(ret < 0);
-   } else {
-      ret = (Int)(Word) sr_Res(res);
-      vg_assert(ret >= 0);
-   }
-   return ret;
-}
-
 Int VG_(write) ( Int fd, const void* buf, Int count)
 {
    Int    ret;

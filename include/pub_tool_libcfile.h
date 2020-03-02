@@ -94,10 +94,6 @@ extern SysRes VG_(dup2)   ( Int oldfd, Int newfd );
 extern Int    VG_(rename) ( const HChar* old_name, const HChar* new_name );
 extern Int    VG_(unlink) ( const HChar* file_name );
 
-extern Int    VG_(semget)(vki_key_t key, Int nsems, Int semflg);
-extern Int    VG_(semctl)(Int semid, Int semnum, Int cmd, ...);
-extern Int    VG_(semop)(Int semid, struct vki_sembuf *sops, UWord nsops);
-
 extern SysRes VG_(poll) (struct vki_pollfd *fds, Int nfds, Int timeout);
 
 extern SSizeT VG_(readlink)( const HChar* path, HChar* buf, SizeT bufsiz);
