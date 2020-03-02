@@ -292,7 +292,7 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 				if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
 					FLUSH(&last->next);
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
-					// FLUSH(&dq->tail);
+					FLUSH(&dq->tail);
 					post_enqueue(dq);
 					hazard_release(last, false);
 					return true;
@@ -300,7 +300,7 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 			} else {
 				FLUSH(&last->next);
 				atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
-				// FLUSH(&dq->tail);
+				FLUSH(&dq->tail);
 			}
 		} 
 	}
@@ -344,6 +344,7 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
 					FLUSH(&dq->head);
 					hazard_release(first, true);
+					post_dequeue(dq);
 					return retval;
 				}
 			}
