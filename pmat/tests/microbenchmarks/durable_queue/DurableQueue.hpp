@@ -462,6 +462,7 @@ namespace DurableQueue
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
                 this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
+                this->hazardPtrs = nullptr;
 
                 // Initialize allocList
                 int allocSz = 0;
