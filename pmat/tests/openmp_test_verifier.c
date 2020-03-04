@@ -13,33 +13,22 @@
 #include <string.h>
 #include <valgrind/pmat.h>
 #include <assert.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include "utils.h"
 
-#ifndef N
-#define N (1024)
-#endif
-#define SIZE (N * sizeof(int))
 
 // Expects to be called like `./verifier 1 filename.bin`
 int main(int argc, char *argv[]) {
 	assert(argc >= 3);
     assert(strcmp(argv[1], "1") == 0);
 
-    int fd = open(argv[2], O_RDONLY);
-    assert(fd != -1);
-    struct stat sb;
-    int retval = fstat(fd, &sb);
-    assert(retval != -1);
-    size_t sz = sb.st_size;
-    int *arr = mmap(NULL, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+    int sz;
+    int *arr = OPEN_HEAP(argv[2], O_RDONLY, &sz);
     assert(arr != (void *) -1);
+    int numElems = sz / sizeof(int);
 
     // Verification...
     int bad = 0;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < numElems; i++) {
         if (arr[i] != i) {
             bad += 1;
         }

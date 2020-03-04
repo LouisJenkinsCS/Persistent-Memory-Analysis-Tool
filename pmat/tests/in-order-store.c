@@ -8,6 +8,7 @@
 #include <string.h>
 #include <valgrind/pmat.h>
 #include <assert.h>
+#include "utils.h"
 
 #ifndef N
 #define N (1024)
@@ -21,15 +22,14 @@ int main(int argc, char *argv[]) {
 	int check;
 
 	/* create a pmem file and memory map it */
-	int *arr;
-	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
-	memset(arr, 0, SIZE);
-	PMAT_REGISTER("in-order-store.bin", arr, SIZE);
+	int *arr = CREATE_HEAP("in-order-store.bin", SIZE);
+	assert(arr != (void *) -1);
+	PMAT_REGISTER("in-order-store-shadow.bin", arr, SIZE);
 
     // Initialize array sequentially...
 	for (int i = 0; i < N; i++) {
 		arr[i] = i;
-		asm volatile ("clflush (%0)" :: "r"(arr + i));
+		CLFLUSH(arr + i);
         PMAT_FORCE_CRASH();
 	}
 

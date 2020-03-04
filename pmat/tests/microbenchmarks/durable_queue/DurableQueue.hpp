@@ -157,6 +157,8 @@ namespace DurableQueue
             template <class T>
             class ABAPtr {
                 public:
+                    ABAPtr(std::nullptr_t _t) {}
+
                     bool CAS(ABA<T>& expected, ABA<T>& with) {
                         uint128_t& abaRef = aba.to_raw_ptr();
                         uint128_t& expectedRef = expected.to_raw_ptr();
@@ -365,6 +367,12 @@ namespace DurableQueue
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
                 this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
+                for (auto &ll : this->limboList) ll = new Memory::FreeList<DurableQueueNode<T, NilT>*>();
+                this->globalEpoch = 0;
+                for (auto& epoch : this->threadEpochs) {
+                    epoch = UINT64_MAX;
+                }
+                this->advancingEpoch.clear();
 
                 // Initialize allocList
                 int allocSz = 0;
@@ -397,6 +405,8 @@ namespace DurableQueue
             }
 
             bool enqueue(T t, int tid) {
+                // Enter Epoch
+                this->threadEpochs[tid].store(this->globalEpoch.load());
                 DurableQueueNode<T, NilT> *node = freeList->pop();
                 if (!node) return false;
                 node->deqThreadID = -1;
@@ -421,6 +431,7 @@ namespace DurableQueue
                                 DQ_FLUSH(&tail);
                                 numEnqueues += 1;
                                 DQ_FLUSH(&numEnqueues);
+                                this->threadEpochs[tid].store(UINT64_MAX);
                                 return true;
                             }
                         } else {
@@ -532,12 +543,13 @@ namespace DurableQueue
             }
 
             T dequeue(int tid) {
+                this->threadEpochs[tid].store(this->globalEpoch);
                 retvals[tid] = NilT;
                 DQ_FLUSH(&retvals[tid]);
 
                 while(true) {
                     auto _head = head.load();
-                    hazardPtrs->protectPtr(0, _head, tid);
+                    // hazardPtrs->protectPtr(0, _head, tid);
                     auto _tail = tail.load();
                     if (head.load() != _head) {
                         continue;
@@ -551,8 +563,9 @@ namespace DurableQueue
                     if (_head == _tail) {
                         if (next == nullptr) {
                             retvals[tid] = EmptyT;
-                            hazardPtrs->clearOne(0, tid);
-                            hazardPtrs->clearOne(1, tid);
+                            // hazardPtrs->clearOne(0, tid);
+                            // hazardPtrs->clearOne(1, tid);
+                            this->threadEpochs[tid].store(UINT64_MAX);
                             return EmptyT;
                         } else {
                             tail.compare_exchange_strong(_tail, next);
@@ -562,9 +575,31 @@ namespace DurableQueue
                         int expectedID = -1;
                         if (head.compare_exchange_strong(_head, next)) {
                             DQ_FLUSH(&head);
-                            hazardPtrs->retire(_head, tid);
+                            // hazardPtrs->retire(_head, tid);
                             numDequeues += 1;
                             DQ_FLUSH(&numDequeues);
+                            this->threadEpochs[tid].store(UINT64_MAX);
+                            // TODO: Need to keep track of the number of operations since last advanced epoch.
+                            if (!this->advancingEpoch.test_and_set()) {
+                                uint64_t min = UINT64_MAX;
+                                for (auto& epoch : this->threadEpochs) {
+                                    min = std::min(min, epoch.load());
+                                }
+                                uint64_t e = this->globalEpoch;
+                                if (min == e || min == UINT64_MAX) {
+                                    this->globalEpoch += 1;
+                                }
+                                // Reclaim epoch `e - 2`
+                                int idx = (e - 2) % 3;
+                                assert(idx >= 0 && idx <= 2);
+                                auto& ll = this->limboList[idx];
+                                auto *node = ll->pop();
+                                while (node) {
+                                    this->freeList->push(node);
+                                    node = ll->pop();
+                                }
+                                this->advancingEpoch.clear();
+                            }
                             return retval;
                         }
                     }
@@ -596,6 +631,14 @@ namespace DurableQueue
             std::vector<DurableQueueNode<T, NilT>*>* allocList;
             // Transient HazardPointers
             HazardPointers<DurableQueueNode<T, NilT>>* hazardPtrs;
+            // Transient Global Epoch
+            std::atomic<uint64_t> globalEpoch;
+            // Transient Local Epochs
+            std::atomic<uint64_t> threadEpochs[DQ_MAX_THREADS];
+            // Transient Limbo Lists
+            Memory::FreeList<DurableQueueNode<T, NilT>*> *limboList[3];
+            // Transient Epoch-Advancing Atomic Flag
+            std::atomic_flag advancingEpoch;
     };
 
     // Note: Not thread safe...

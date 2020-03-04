@@ -16,4 +16,4 @@ install:
 
 .PHONY: clean
 clean:
-	-rm -f $(EXECS) $(PROGS) $(BINS) *.stderr *.stdout *.dump
+	-rm -f $(EXECS) $(PROGS) *.bin *.stderr *.stdout *.dump

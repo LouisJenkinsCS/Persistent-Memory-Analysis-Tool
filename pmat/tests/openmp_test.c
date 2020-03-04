@@ -13,6 +13,7 @@
 #include <string.h>
 #include <assert.h>
 #include <valgrind/pmat.h>
+#include "utils.h"
 
 #ifndef N
 #define N (1024)
@@ -21,15 +22,11 @@
 
 int main(int argc, char *argv[]) {
 	PMAT_CRASH_DISABLE();
-	size_t mapped_len;
-	int is_pmem;
-	int check;
 
 	/* create a pmem file and memory map it */
-	int *arr;
-	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, SIZE) == 0);
-	memset(arr, 0, SIZE);
-	PMAT_REGISTER("openmp_test.bin", arr, SIZE);
+	int *arr = CREATE_HEAP("openmp_test.bin", SIZE);
+	assert(arr != (void *) -1);
+	PMAT_REGISTER("openmp_test-shadow.bin", arr, SIZE);
 
 	// Parallel Identity-Map over 'persistent' memory...
 	#pragma omp parallel for
@@ -40,7 +37,7 @@ int main(int argc, char *argv[]) {
 		// gets flushed before all values get written. I.E: the thread in charge of
 		// i=6 may not have written `arr[6] = 6;` before its cache-line gets flushed,
 		// which means it is possible for it to _never_ be written back to NVRAM. 
-		if (i % 8 == 0) asm volatile("clflush %0" : "+m" (*(volatile char *)(arr + i)));
+		if (i % 8 == 0) CLFLUSH(arr + i);
 	} // An SFENCE is already injected in the OMP parallel loop
 
 	PMAT_FORCE_CRASH();
