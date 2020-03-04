@@ -24,7 +24,7 @@
 
 #define CREATE_HEAP(name, size) ({ \
     int __fd = open(name, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); \
-    int __retval = ftruncate(__fd, size); \
+    int __retval __attribute__ ((unused)) = ftruncate(__fd, size); \
     void *__arr = mmap(MMAP_ADDRESS, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, __fd, 0); \
     __arr; \
 })

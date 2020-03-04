@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../utils.h"
 
 /*
  * - Modified from pmreorder_list.c (in PMDK/src/examples/pmreorder/)
@@ -16,7 +17,6 @@
  * N - Number of nodes (size of linked list is directly porportional to this value...)
  */
 int main(int argc, char *argv[]) {
-	void *heap;
 
 	if (argc != 3 || strchr("cgb", argv[1][0]) == NULL ||
 			argv[1][1] != '\0') {
@@ -28,9 +28,9 @@ int main(int argc, char *argv[]) {
     assert(N > 0);
     size_t size = sizeof(struct list_root) + (N+1) * sizeof(struct list_node);
 
-	assert(posix_memalign(&heap, PMAT_CACHELINE_SIZE, size) == 0);
-    memset(heap, 0, size);
-	PMAT_REGISTER("linked_list.bin", heap, size);
+	void *heap = CREATE_HEAP("linked_list.bin", size);
+	assert(heap != (void *) -1);
+	PMAT_REGISTER("linked_list-shadow.bin", heap, size);
 	struct list_root *r = heap;
 
 	char opt = argv[1][0];
@@ -54,6 +54,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	PMAT_UNREGISTER_BY_ADDR(heap);
-	free(heap);
+	munmap(heap, size);
 	return 0;
 }

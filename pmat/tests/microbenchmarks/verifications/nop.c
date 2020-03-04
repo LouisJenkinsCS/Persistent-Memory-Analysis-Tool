@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include "../../utils.h"
 
 int main(int argc, char *argv[]) {
 	if (argc != 2) {
@@ -19,10 +20,8 @@ int main(int argc, char *argv[]) {
 	time_t start, end;
 	time(&start);
 	
-	int *arr;
-	assert(posix_memalign((void **) &arr, PMAT_CACHELINE_SIZE, 1024) == 0);
-	memset(arr, 0, 1024);
-	PMAT_REGISTER("dummy.bin", arr, 1024);	
+	int *arr = CREATE_HEAP("dummy.bin", 1024);
+	PMAT_REGISTER("dummy-shadow.bin", arr, 1024);	
 
 	while (1) {
 		time(&end);
