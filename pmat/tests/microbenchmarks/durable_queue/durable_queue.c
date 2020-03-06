@@ -339,13 +339,33 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				int retval = next->value;
 				assert(retval != -1);
 				assert(next->free_list_next == 0);
-				assert(tid != -1);
 				int_least64_t expected_tid = -1;
-				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
-					FLUSH(&dq->head);
-					hazard_release(first, true);
+				// Attempt to claim this queue node as our own
+				if (atomic_compare_exchange_strong(&next->deqThreadID, &expected_tid, tid)) {
+					// Paper does FLUSH(&first->next->deqThreadID) instead of just flushing &next->deqThreadID...
+					struct DurableQueueNode *tmp = atomic_load(&first->next);
+					FLUSH(&tmp->deqThreadID);
+					dq->returnedValues[tid] = retval;
+					FLUSH(&dq->returnedValues[tid]);
+					atomic_compare_exchange_strong(&dq->head, &first, (uintptr_t) next);
+					// FLUSH(&dq->head);
 					post_dequeue(dq);
+					hazard_release(first, true);
+					hazard_release(next, false);
 					return retval;
+				} else {
+					// Help push their operation along...
+					int *address = &dq->returnedValues[atomic_load(&next->deqThreadID)];
+					if (atomic_load(&dq->head) == (uintptr_t) first) {
+						// The owning thread has not yet pushed progress forward
+						struct DurableQueueNode *tmp = atomic_load(&first->next);
+						FLUSH(&tmp->deqThreadID);
+						*address = retval;
+						FLUSH(address);
+						atomic_compare_exchange_strong(&dq->head, &first, (uintptr_t) next);
+						// Needed, despite not being mentioned in the paper.
+						// FLUSH(&dq->head);
+					}
 				}
 			}
 		}
