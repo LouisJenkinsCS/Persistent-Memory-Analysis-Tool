@@ -2,10 +2,6 @@
 #define PMAT_INCLUDE_H
 
 #include "pmat.h"
-/*
-    Dependency Graph used to declare ordering constraints between memory locations.
-*/
-
 
 struct pmat_transient_entry {
     Addr addr;
@@ -86,5 +82,40 @@ Word cmp_pmat_write_buffer_entries(const void *key, const void *elem);
 
 Word cmp_pmat_transient_entries(const void *key, const void *elem);
 
-#endif	/* PMAT_INCLUDE_H */
 
+/**
+ * Splay Tree for LRU Cache
+ */
+// Splay Tree node - holds address of cache-line, as well as
+// number of children. The number of children is used when performing
+// stochastic cache evictions.
+struct pmat_lru_node { 
+    Addr key; 
+    void *value; 
+    Int num_left;
+    struct pmat_lru_node *left;
+    Int num_right;
+    struct pmat_lru_node *right;
+}; 
+
+struct pmat_lru_cache {
+    struct pmat_lru_node *root;
+};
+
+
+// Create LRU cache utilizing a comparator
+struct pmat_lru_cache *pmat_create_lru(void);
+
+// Insert key and value into LRU Cache.
+void pmat_lru_cache_insert(struct pmat_lru_cache *cache, Addr key, void *value);
+
+// Evicts an entry from the LRU Cache; returns evicted value
+void *pmat_lru_cache_evict(struct pmat_lru_cache *cache, UInt *seed);
+
+// Searches the LRU cache; if present, returns value and splays; returns NULL if not found
+void *pmat_lru_cache_lookup(struct pmat_lru_cache *cache, Addr key);
+
+// Obtains the size of the LRU Cache
+Int pmat_lru_cache_size(struct pmat_lru_cache *cache);
+
+#endif	/* PMAT_INCLUDE_H */
