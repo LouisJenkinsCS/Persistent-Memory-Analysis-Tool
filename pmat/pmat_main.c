@@ -677,6 +677,8 @@ static Double diff(struct vki_timespec start, struct vki_timespec end)
     return (Double) (temp.tv_sec + ((Double) temp.tv_nsec) / 1000000000.0);
 }
 
+static void pmat_fini(int exitcode);
+
 // TODO: Need to write stderr and stdout to their own temporary files; these files persist if recovery fails!
 // TODO: Need to set timeout for recovery operations, in case they do an infinite loop. Parent currently gets stuck in a syscall!
 static void simulate_crash(void) {
@@ -742,6 +744,8 @@ static void simulate_crash(void) {
 
             pmem.num_bad_verifications++;
             if (pmem.pmat_terminate_on_error) {
+                VG_(show_sched_status)(False, False, False);
+                pmat_fini(1);
                 VG_(exit)(1);
             }
         } 
