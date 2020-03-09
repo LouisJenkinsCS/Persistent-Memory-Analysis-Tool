@@ -72,12 +72,19 @@ static struct pmem_ops {
     OSet *pmat_cache_entries;
     /** Store buffer for to-be-written-back stores. */
     OSet *pmat_writeback_buffer_entries;
+    /** Aggregate dumps (null if pmat_aggregate_dump_only is false) (Cache-Only) */
+    OSet *pmat_aggregate_cache_dump;
+    OSet *pmat_aggregate_flushed_dump;
     /** Whether or not we should verify */
     Bool pmat_should_verify;
     /** Verification program */
     const HChar *pmat_verifier;
     /** Whether or not a copy of the shadow region (binary) should be preserved on error. */
     Bool pmat_preserve_bin_on_error;
+    /** Whether to create a single aggregated .dump file or not on exit. No .stderr or .stdout files are created if so. */
+    Bool pmat_aggregate_dump_only;
+    /** Whether to terminate on the first error or not. */
+    Bool pmat_terminate_on_error;
     /** Set of addresses to ignore (marked transient) */
     OSet *pmat_transient_addresses; 
     /** Random Seed used for RNG. */
@@ -105,6 +112,11 @@ static struct pmem_ops {
     /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
     Double ssd_verification_time;
 } pmem;
+
+struct pmat_flush_location {
+    ExeContext *store;
+    ExeContext *flush;
+};
 
 /*
  * Memory tracing pattern as in cachegrind/lackey - in case of future
@@ -136,6 +148,23 @@ static ULong sblocks = 0;
 
 static void stringify_stack_trace(ExeContext *context, int fd);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+
+static Int cmp_flush_locations(struct pmat_flush_location *loc1, struct pmat_flush_location *loc2) {
+    Int retval = cmp_exe_context_pointers(&loc1->store, &loc2->store);
+    if (retval != 0) {
+        if (loc1->flush == NULL && loc2->flush == NULL) {
+            return 0;
+        } else if ((loc1-> flush == NULL && loc2->flush != NULL)) {
+            return 1;
+        } else if ((loc1->flush != NULL && loc2->flush == NULL)) {
+            return -1;
+        } else {
+            return cmp_exe_context_pointers(&loc1->flush, &loc2->flush);
+        }
+    } else {
+        return retval;
+    }
+}
 
 static UInt get_random(void) {
     return VG_(random)(&pmem.pmat_rng_seed);
@@ -406,16 +435,17 @@ static void dump_to_file(int fd) {
     }
 
     VG_(OSetGen_Destroy)(unique_cache_lines);
-    unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
+    unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_flush_locations, VG_(malloc), "Coalesce Cache Lines", VG_(free));
 
     VG_(snprintf)(charbuf, 256, "Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries));
     VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
     VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
     struct pmat_writeback_buffer_entry *wbentry = NULL;
     while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries))) {
-        if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->locOfStore)) continue;
-        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
-        *node = wbentry->entry->locOfStore;
+        struct pmat_flush_location tmp = { .store = wbentry->entry->locOfStore, .flush = wbentry->locOfFlush };
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &tmp)) continue;
+        struct pmat_flush_location *node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(struct pmat_flush_location));
+        *node = tmp;
         VG_(OSetGen_Insert)(unique_cache_lines, node);
         struct pmat_cache_entry *_entry = wbentry->entry;
         struct pmat_registered_file file = {0};
@@ -437,6 +467,71 @@ static void dump_to_file(int fd) {
         }
         VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
         VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    }
+}
+
+static void dump_aggregate_to_file(void) {
+    SysRes res = VG_(open)("aggregate.dump", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+    if (sr_isError(res)) {
+        VG_(emit)("Could not open file '%s'; errno: %ld\n", "aggregate.dump", sr_Err(res));
+        tl_assert(0);
+    }
+    int fd = sr_Res(res);
+    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    HChar charbuf[256];
+    VG_(snprintf)(charbuf, 256, "Number of distinct cache-lines not made persistent: %u\n", VG_(OSetGen_Size)(pmem.pmat_aggregate_cache_dump));
+    VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+
+    ExeContext *entry;
+    VG_(OSetGen_ResetIter)(pmem.pmat_aggregate_cache_dump);
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_aggregate_cache_dump))) {
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        stringify_stack_trace(entry, fd);
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    }
+
+    VG_(snprintf)(charbuf, 256, "Number of distinct cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_aggregate_flushed_dump));
+    VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    VG_(OSetGen_ResetIter)(pmem.pmat_aggregate_flushed_dump);
+    struct pmat_flush_location *flushLoc = NULL;
+    while ((flushLoc = VG_(OSetGen_Next)(pmem.pmat_aggregate_flushed_dump))) {
+        VG_(snprintf)(charbuf, 256, "~~~~~~(Location of Store)~~~~~~~~~\n");
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        stringify_stack_trace(flushLoc->store, fd);
+        VG_(snprintf)(charbuf, 256, "~~~~~~(Location of Flush)~~~~~~~~~\n");
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        if (flushLoc->flush) {
+            stringify_stack_trace(flushLoc->flush, fd);
+        } else {
+            VG_(snprintf)(charbuf, 256, "(EVICTED)\n");
+            VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+        }
+        VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
+        VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
+    }
+}
+
+static void dump_aggregate(void) {
+    // To prevent having to print out ExeContext for cache lines with the same stack
+    // trace, we instead create mappings from stack traces to cache lines.
+    struct pmat_cache_entry *entry;
+    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+        if (VG_(OSetGen_Contains)(pmem.pmat_aggregate_cache_dump, &entry->locOfStore)) continue;
+        ExeContext **node = VG_(OSetGen_AllocNode)(pmem.pmat_aggregate_cache_dump, (SizeT) sizeof(ExeContext *));
+        *node = entry->locOfStore;
+        VG_(OSetGen_Insert)(pmem.pmat_aggregate_cache_dump, node);
+    }
+
+    VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
+    struct pmat_writeback_buffer_entry *wbentry = NULL;
+    while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries))) {
+        struct pmat_flush_location tmp = { .store = wbentry->entry->locOfStore, .flush = wbentry->locOfFlush };
+        if (VG_(OSetGen_Contains)(pmem.pmat_aggregate_flushed_dump, &tmp)) continue;
+        struct pmat_flush_location *node = VG_(OSetGen_AllocNode)(pmem.pmat_aggregate_flushed_dump, (SizeT) sizeof(struct pmat_flush_location));
+        *node = tmp;
+        VG_(OSetGen_Insert)(pmem.pmat_aggregate_flushed_dump, node);
     }
 }
 
@@ -473,15 +568,16 @@ static void dump(void) {
     }
 
     VG_(OSetGen_Destroy)(unique_cache_lines);
-    unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
+    unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_flush_locations, VG_(malloc), "Coalesce Cache Lines", VG_(free));
 
     VG_(umsg)("Number of cache-lines flushed but not fenced: %u\n", VG_(OSetGen_Size)(pmem.pmat_writeback_buffer_entries));
     VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
     struct pmat_writeback_buffer_entry *wbentry = NULL;
     while ((wbentry = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries))) {
-        if (VG_(OSetGen_Contains)(unique_cache_lines, &wbentry->entry->locOfStore)) continue;
-        ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
-        *node = wbentry->entry->locOfStore;
+        struct pmat_flush_location tmp = { .store = wbentry->entry->locOfStore, .flush = wbentry->locOfFlush };
+        if (VG_(OSetGen_Contains)(unique_cache_lines, &tmp)) continue;
+        struct pmat_flush_location *node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(struct pmat_flush_location));
+        *node = tmp;
         VG_(OSetGen_Insert)(unique_cache_lines, node);
         struct pmat_cache_entry *_entry = wbentry->entry;
         struct pmat_registered_file file = {0};
@@ -594,7 +690,6 @@ static void simulate_crash(void) {
 
     Int verif_num = ++pmem.num_verifications;
 
-    // Code path - Serial execution... Significantly faster than parallel.
     // Start timer...
     struct vki_timespec start;
     struct vki_timespec end;
@@ -625,20 +720,30 @@ static void simulate_crash(void) {
             VG_(unlink)(stderr_file);
             VG_(unlink)(stdout_file);
         } else {
-            char dump_file[64];
-            VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
-            SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
-            if (sr_isError(res)) {
-                VG_(emit)("Could not open file '%s'; errno: %ld\n", dump_file, sr_Err(res));
-                tl_assert(0);
-            }
-            dump_to_file(sr_Res(res));
+            // Create copy of shadow region
             if (pmem.pmat_preserve_bin_on_error) {
                 char bin_name[64];
                 VG_(snprintf)(bin_name, 64, "%d", verif_num);
                 copy_files(bin_name);
             }
+            // Should we aggregate the dump file?
+            if (pmem.pmat_aggregate_dump_only) {
+                dump_aggregate();
+            } else {
+                char dump_file[64];
+                VG_(snprintf)(dump_file, 64, "%d.dump", verif_num);
+                SysRes res = VG_(open)(dump_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+                if (sr_isError(res)) {
+                    VG_(emit)("Could not open file '%s'; errno: %ld\n", dump_file, sr_Err(res));
+                    tl_assert(0);
+                }
+                dump_to_file(sr_Res(res));
+            }
+
             pmem.num_bad_verifications++;
+            if (pmem.pmat_terminate_on_error) {
+                VG_(exit)(1);
+            }
         } 
         return;
     } else {
@@ -647,8 +752,13 @@ static void simulate_crash(void) {
         // Redirect to a file...
         char stderr_file[64];
         char stdout_file[64];
-        VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
-        VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
+        if (pmem.pmat_aggregate_dump_only) {
+            VG_(snprintf)(stderr_file, 64, "/dev/null");
+            VG_(snprintf)(stdout_file, 64, "/dev/null");    
+        } else {
+            VG_(snprintf)(stderr_file, 64, "%d.stderr", verif_num);
+            VG_(snprintf)(stdout_file, 64, "%d.stdout", verif_num);
+        }
         SysRes res = VG_(open)(stderr_file, VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
         if (sr_isError(res)) {
             VG_(emit)("Could not open file '%s'; errno: %ld\n", stderr_file, sr_Err(res));
@@ -1810,6 +1920,8 @@ pmat_process_cmd_line_option(const HChar *arg)
     else if VG_INT_CLO(arg, "--num-wb-entries", pmem.pmat_num_wb_entries) {}
     else if VG_INT_CLO(arg, "--rng-seed", pmem.pmat_rng_seed) {}
     else if VG_BOOL_CLO(arg, "--preserve-bin-on-error", pmem.pmat_preserve_bin_on_error) {}
+    else if VG_BOOL_CLO(arg, "--aggregate-dump-only", pmem.pmat_aggregate_dump_only) {}
+    else if VG_BOOL_CLO(arg, "--terminate-on-error", pmem.pmat_terminate_on_error) {}
     else return False;
 
     return True;
@@ -1827,6 +1939,10 @@ pmat_post_clo_init(void)
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
             MAX(100, pmem.pmat_num_wb_entries), (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
+    if (pmem.pmat_aggregate_dump_only) {
+        pmem.pmat_aggregate_cache_dump = VG_(OSetGen_Create)(0, cmp_exe_context_pointers, VG_(malloc), "pmat.main.cpci.-4", VG_(free));
+        pmem.pmat_aggregate_flushed_dump = VG_(OSetGen_Create)(0, cmp_flush_locations, VG_(malloc), "pmat.main.cpci.-5", VG_(free));
+    }
     pmem.pmat_should_verify = True;
     // Parent compares based on 'Addr' so that it can find the descr associated with the address.
     pmem.pmat_registered_files = VG_(OSetGen_Create)(0, cmp_pmat_registered_files1, VG_(malloc), "pmat.main.cpci.-1", VG_(free));
@@ -1865,7 +1981,12 @@ pmat_print_usage(void)
             "                                      default [131072]\n"
             "    --rng-seed=N                      The value of RNG seed used when simulating a crash or evicting entries\n"
             "                                      default [/dev/urandom]\n"
-            "    --preserve-bin-on-error           Preserve the copy of the shadow region alongside .stderr, .stdout, and .dump files.\n"
+            "    --preserve-bin-on-error=yes|no    Preserve the copy of the shadow region alongside .stderr, .stdout, and .dump files.\n"
+            "                                      default [no]\n"
+            "    --aggregate-dump-only=yes|no      Aggregate and coalesce .dump files into a single `aggregated.dump` file.\n"
+            "                                      default [no]\n"
+            "    --terminate-on-error=yes|no       Terminates the program on the first error occurred, rather than continuing execution.\n"
+            "                                      default [no]\n"
     );
 }
 
@@ -1930,6 +2051,8 @@ pmat_fini(Int exitcode)
             
             VG_(emit)("Verification Function Stats (seconds):\n\tMinimum:%lf%s%ld\n\tMaximum:%lf%s%ld\n\tMean:%lf%s%ld\n\tVariance:%lf%s%ld\n",
                 mins, mins_norm ? "e" : "", mins_norm, maxs, maxs_norm ? "e" : "", maxs_norm, mean, mean_norm ? "e" : "", mean_norm, var, var_norm ? "e" : "", var_norm);
+            
+            if (pmem.pmat_aggregate_dump_only) dump_aggregate_to_file();
         }
     }
 }
@@ -1974,6 +2097,8 @@ pmat_pre_clo_init(void)
     pmem.pmat_eviction_prob = 0.1;
     pmem.pmat_rng_seed = get_urandom();
     pmem.pmat_preserve_bin_on_error = False;
+    pmem.pmat_aggregate_dump_only = False;
+    pmem.pmat_terminate_on_error = False;
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)
