@@ -64,12 +64,11 @@
 
 /** Holds parameters and runtime data */
 static struct pmem_ops {
-    /** Pipe between parent and child */
-    Int pmat_pipe_fd[2];
+    const HChar *pmat_eviction_policy_str;
+    /** Eviction policy being used. */
+    struct pmat_eviction_policy pmat_eviction_policy;
     /** Mappings of files addresses to their descriptors */
     OSet *pmat_registered_files;
-    /* Entries in cache; TODO: Use a Pool */
-    OSet *pmat_cache_entries;
     /** Store buffer for to-be-written-back stores. */
     OSet *pmat_writeback_buffer_entries;
     /** Aggregate dumps (null if pmat_aggregate_dump_only is false) (Cache-Only) */
@@ -166,21 +165,32 @@ static Int cmp_flush_locations(struct pmat_flush_location *loc1, struct pmat_flu
     }
 }
 
-static UInt get_random(void) {
-    return VG_(random)(&pmem.pmat_rng_seed);
+static void *eviction_lookup(Addr key) {
+    return pmem.pmat_eviction_policy.lookup(pmem.pmat_eviction_policy.arg, key);
 }
 
-static UInt get_urandom(void) {
-    int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
-    if (fd < 0) {
-        VG_(emit)("Could not open /dev/urandom, defaulting to static seed...");
-        return 0;
-    }
+static void eviction_add(Addr key, void *value) {
+    pmem.pmat_eviction_policy.insert(pmem.pmat_eviction_policy.arg, key, value);
+}
 
-    UInt ret;
-    VG_(read)(fd, &ret, sizeof(UInt));
-    VG_(close)(fd);
-    return ret;
+static void eviction_remove(Addr key) {
+    pmem.pmat_eviction_policy.remove(pmem.pmat_eviction_policy.arg, key);
+}
+
+static void *eviction_evict(void) {
+    return pmem.pmat_eviction_policy.evict(pmem.pmat_eviction_policy.arg);
+}
+
+static UInt eviction_size(void) {
+    return pmem.pmat_eviction_policy.size(pmem.pmat_eviction_policy.arg);
+}
+
+static void **eviction_to_array(SizeT *sz) {
+    return pmem.pmat_eviction_policy.to_array(pmem.pmat_eviction_policy.arg, sz);
+}
+
+static UInt get_random(void) {
+    return VG_(random)(&pmem.pmat_rng_seed);
 }
 
 // Obtain number of processors
@@ -396,16 +406,18 @@ cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs) {
 }
 
 static void dump_to_file(int fd) {
-    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    SizeT size;
+    void **cache_lines = eviction_to_array(&size);
     HChar charbuf[256];
-    VG_(snprintf)(charbuf, 256, "Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)(pmem.pmat_cache_entries));
+    VG_(snprintf)(charbuf, 256, "Number of cache-lines not made persistent: %u\n", size);
     VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
 
     // To prevent having to print out ExeContext for cache lines with the same stack
     // trace, we instead create mappings from stack traces to cache lines.
     OSet *unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
     struct pmat_cache_entry *entry;
-    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+    for (SizeT i = 0; i < size; i++) {
+        entry = cache_lines[i];
         if (VG_(OSetGen_Contains)(unique_cache_lines, &entry->locOfStore)) continue;
         ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
         *node = entry->locOfStore;
@@ -477,7 +489,6 @@ static void dump_aggregate_to_file(void) {
         tl_assert(0);
     }
     int fd = sr_Res(res);
-    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
     HChar charbuf[256];
     VG_(snprintf)(charbuf, 256, "Number of distinct cache-lines not made persistent: %u\n", VG_(OSetGen_Size)(pmem.pmat_aggregate_cache_dump));
     VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
@@ -514,10 +525,14 @@ static void dump_aggregate_to_file(void) {
 }
 
 static void dump_aggregate(void) {
+    SizeT size;
+    void **cache_lines = eviction_to_array(&size);
+    
     // To prevent having to print out ExeContext for cache lines with the same stack
     // trace, we instead create mappings from stack traces to cache lines.
     struct pmat_cache_entry *entry;
-    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+    for (SizeT i = 0; i < size; i++) {
+        entry = cache_lines[i];
         if (VG_(OSetGen_Contains)(pmem.pmat_aggregate_cache_dump, &entry->locOfStore)) continue;
         ExeContext **node = VG_(OSetGen_AllocNode)(pmem.pmat_aggregate_cache_dump, (SizeT) sizeof(ExeContext *));
         *node = entry->locOfStore;
@@ -536,15 +551,16 @@ static void dump_aggregate(void) {
 }
 
 static void dump(void) {
-    VG_(umsg)("Number of cache-lines not made persistent: %u\n", VG_(OSetGen_Size)
-            (pmem.pmat_cache_entries));
-    VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
+    SizeT size;
+    void **cache_lines = eviction_to_array(&size);
+    VG_(umsg)("Number of cache-lines not made persistent: %u\n", size);
 
     // To prevent having to print out ExeContext for cache lines with the same stack
     // trace, we instead create mappings from stack traces to cache lines.
     OSet *unique_cache_lines = VG_(OSetGen_Create)(0, (OSetCmp_t) cmp_exe_context_pointers, VG_(malloc), "Coalesce Cache Lines", VG_(free));
     struct pmat_cache_entry *entry;
-    while ((entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries))) {
+    for (SizeT i = 0; i < size; i++) {
+        entry = cache_lines[i];
         if (VG_(OSetGen_Contains)(unique_cache_lines, &entry->locOfStore)) continue;
         ExeContext **node = VG_(OSetGen_AllocNode)(unique_cache_lines, (SizeT) sizeof(ExeContext *));
         *node = entry->locOfStore;
@@ -833,13 +849,9 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
         VG_(emit)("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%lld,%lld)", addr, addr + size, startOffset, endOffset);
         //return;
     }
-    //tl_assert(startOffset < endOffset && "End Offset < Start Offset; Splits Cache Line!!! Not Supported...");
-    
-    struct pmat_cache_entry entry;
-    entry.addr = TRIM_CACHELINE(addr);
-    
+
     // If the cache line has not been written back, write it into that cache-line.
-    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
+    struct pmat_cache_entry *exists = eviction_lookup(TRIM_CACHELINE(addr));
     if (exists) {
         VG_(memcpy)(exists->data + startOffset, &value, size);
         exists->locOfStore = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
@@ -849,37 +861,25 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
         return;
     } else {
         // Create a new entry...
-        struct pmat_cache_entry *new_entry = VG_(OSetGen_AllocNode)(pmem.pmat_cache_entries,
-            (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
+        struct pmat_cache_entry *new_entry = VG_(malloc)("pmat.new_entry", (SizeT) sizeof (struct pmat_cache_entry) + CACHELINE_SIZE);
         new_entry->locOfStore = VG_(record_ExeContext)(VG_(get_running_tid)(), 0);
         new_entry->tid = VG_(get_running_tid)();
         new_entry->addr = TRIM_CACHELINE(addr);
+        new_entry->dirtyBits = 0;
         VG_(memset)(new_entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(new_entry->data + OFFSET_CACHELINE(addr), &value, size);
         new_entry->dirtyBits |= ((1ULL << ((ULong) size)) - 1ULL) << startOffset;
-
-        VG_(OSetGen_Insert)(pmem.pmat_cache_entries, new_entry);
+        eviction_add(TRIM_CACHELINE(addr), new_entry);
         // Check if we need to evict...
-        if (VG_(OSetGen_Size)(pmem.pmat_cache_entries) > pmem.pmat_num_cache_entries) {
-            XArray *arr = VG_(newXA)(VG_(malloc), "pmat_cache_eviction", VG_(free), sizeof(struct pmat_cache_entry));  
-            VG_(OSetGen_ResetIter)(pmem.pmat_cache_entries);
-            while ( (new_entry = VG_(OSetGen_Next)(pmem.pmat_cache_entries)) ) {
-                if ((get_random() % 100) <= pmem.pmat_eviction_prob) {
-                   VG_(addToXA)(arr, &new_entry); 
-                }
-            }
-            // TODO: Remove selected entries!
-            Word nEntries = VG_(sizeXA)(arr);
-            for (int i = 0; i < nEntries; i++) {
-                new_entry = *(struct pmat_cache_entry **) VG_(indexXA)(arr, i);
-                do_writeback(new_entry, False);
-            }
-            VG_(deleteXA)(arr);
+        if (eviction_size() > pmem.pmat_num_cache_entries) {
+            struct pmat_cache_entry *entry = eviction_evict();
+            do_writeback(new_entry, False);
         }
     }
     maybe_simulate_crash();
 }
 
+// Unused...
 static VG_REGPARM(3) void trace_pmem_store_dword(Addr addr, UWord value1, UWord value2) {
     trace_pmem_store(addr, sizeofIRType(Ity_I64), value1);
     trace_pmem_store(addr, sizeofIRType(Ity_I64), value2);
@@ -1261,8 +1261,8 @@ _do_fence(void)
     for (int i = 0; i < nEntries; i++) {
         wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
         write_to_file(wbentry);
-        VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
         VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+        VG_(free)(wbentry->entry);
         VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
     }
     VG_(deleteXA)(arr);
@@ -1283,8 +1283,8 @@ do_fence(void)
     maybe_simulate_crash();
 }
 
-static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
-    VG_(OSetGen_Remove)(pmem.pmat_cache_entries, entry);
+static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {    
+    eviction_remove(TRIM_CACHELINE(entry->addr));
     ThreadId tid;
     // Flush was initiated by current thread...
     if (explicit) {
@@ -1314,8 +1314,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
     struct pmat_writeback_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_writeback_buffer_entries, &wblookup);
     if (exist) {
        write_to_file(exist);
-       VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, exist->entry);
        VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, exist);
+       VG_(free)(exist->entry);
        VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, exist);
     }
 
@@ -1342,8 +1342,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
         for (int i = 0; i < nEntries; i++) {
             wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
             write_to_file(wbentry);
-            VG_(OSetGen_FreeNode)(pmem.pmat_cache_entries, wbentry->entry);
             VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+            VG_(free)(wbentry->entry);
             VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
         }
         VG_(deleteXA)(arr);
@@ -1362,12 +1362,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
 */
 static void
 do_flush(UWord base, UWord size) {
-    // TODO: Need to handle multi-cacheline flushes!
-    struct pmat_cache_entry entry = {0};
-    entry.addr = TRIM_CACHELINE(base);
-    
     // If the cache line has not been written back, write it into that cache-line.
-    struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
+    struct pmat_cache_entry *exists = eviction_lookup(TRIM_CACHELINE(base));
     if (exists) {
         do_writeback(exists, True);
     }
@@ -1737,17 +1733,10 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         // Check both simulated CPU Cache and whether or not write-back reordering buffer contains cache-line(s) for [addr, addr + sz)
         // TODO: Handle cases where we cross multiple cache-lines
         case VG_USERREQ__PMC_PMAT_IS_PERSIST: {
-            int *retaddr = (void *) arg[3];
-            if (VG_(OSetGen_Size)(pmem.pmat_registered_files) > 0) {
-                struct pmat_cache_entry entry;
-                entry.addr = TRIM_CACHELINE(arg[1]);
-                struct pmat_cache_entry *exists = VG_(OSetGen_Lookup)(pmem.pmat_cache_entries, &entry);
-                if (exists) {
-                    // TODO: Check bitset to see if we're violating it...
-                }
-            } else {
-                *retaddr = -1;
-            }
+            VG_(emit)("PMAT_IS_PERSIST is not implemented!");
+            int *retaddr = arg[3];
+            *retaddr = -1;
+            break;
         }
         // Add to table of addresses to ignore.
         case VG_USERREQ__PMC_PMAT_TRANSIENT: {
@@ -1926,6 +1915,7 @@ pmat_process_cmd_line_option(const HChar *arg)
     else if VG_BOOL_CLO(arg, "--preserve-bin-on-error", pmem.pmat_preserve_bin_on_error) {}
     else if VG_BOOL_CLO(arg, "--aggregate-dump-only", pmem.pmat_aggregate_dump_only) {}
     else if VG_BOOL_CLO(arg, "--terminate-on-error", pmem.pmat_terminate_on_error) {}
+    else if VG_STR_CLO(arg, "--eviction-policy", pmem.pmat_eviction_policy_str) {}
     else return False;
 
     return True;
@@ -1938,8 +1928,6 @@ pmat_process_cmd_line_option(const HChar *arg)
 static void
 pmat_post_clo_init(void)
 {
-    pmem.pmat_cache_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_cache_entries, VG_(malloc), "pmat.main.cpci.0", VG_(free), 
-            MAX(100, pmem.pmat_num_cache_entries), (SizeT) sizeof(struct pmat_cache_entry) + CACHELINE_SIZE);
     pmem.pmat_writeback_buffer_entries = VG_(OSetGen_Create_With_Pool)(0, cmp_pmat_write_buffer_entries, VG_(malloc), "pmat.main.cpci.-2", VG_(free),
             MAX(100, pmem.pmat_num_wb_entries), (SizeT) sizeof(struct pmat_writeback_buffer_entry));
     pmem.pmat_transient_addresses = VG_(OSetGen_Create)(0, cmp_pmat_transient_entries, VG_(malloc), "pmi.main.cpci.-3", VG_(free));
@@ -1956,14 +1944,37 @@ pmat_post_clo_init(void)
         "Crash Rate = %.0f%%\n"
         "Simulated Processor Cache Capacity = %ld Entries\n"
         "Write-Back Reordering Buffer Capacity = %ld Entries\n"
-        "RNG Seed = %x(%u)\n",
+        "RNG Seed = %x(%u)\n"
+        "Eviction Policy = %s\n",
         pmem.pmat_verifier,
         pmem.pmat_eviction_prob * 100,
         pmem.pmat_crash_prob * 100,
         pmem.pmat_num_cache_entries,
         pmem.pmat_num_wb_entries,
-        pmem.pmat_rng_seed, pmem.pmat_rng_seed
+        pmem.pmat_rng_seed, pmem.pmat_rng_seed,
+        pmem.pmat_eviction_policy_str
     );
+
+    if (VG_(strncasecmp)(pmem.pmat_eviction_policy_str, "RR", 2) == 0) {
+        pmem.pmat_eviction_policy.arg = pmat_create_rr();
+        pmem.pmat_eviction_policy.insert = pmat_rr_cache_insert;
+        pmem.pmat_eviction_policy.remove = pmat_rr_cache_remove;
+        pmem.pmat_eviction_policy.evict = pmat_rr_cache_evict;
+        pmem.pmat_eviction_policy.lookup = pmat_rr_cache_lookup;
+        pmem.pmat_eviction_policy.size = pmat_rr_cache_size;
+        pmem.pmat_eviction_policy.to_array = pmat_rr_cache_to_array;
+    } else if (VG_(strncasecmp)(pmem.pmat_eviction_policy_str, "LRU", 3) == 0) {
+        pmem.pmat_eviction_policy.arg = pmat_create_lru();
+        pmem.pmat_eviction_policy.insert = pmat_lru_cache_insert;
+        pmem.pmat_eviction_policy.remove = pmat_lru_cache_remove;
+        pmem.pmat_eviction_policy.evict = pmat_lru_cache_evict;
+        pmem.pmat_eviction_policy.lookup = pmat_lru_cache_lookup;
+        pmem.pmat_eviction_policy.size = pmat_lru_cache_size;
+        pmem.pmat_eviction_policy.to_array = pmat_lru_cache_to_array;
+    } else {
+        VG_(emit)("[ERROR] Bad eviction policy provided: '%s'; Require 'RR' or 'LRU' (not case sensitive)!\n", pmem.pmat_eviction_policy_str);
+        VG_(exit)(1);
+    }
 }
 
 /**
@@ -1991,6 +2002,8 @@ pmat_print_usage(void)
             "                                      default [no]\n"
             "    --terminate-on-error=yes|no       Terminates the program on the first error occurred, rather than continuing execution.\n"
             "                                      default [no]\n"
+            "    --eviction-policy=RR|LRU          Determines the eviction policy to be used.\n"
+            "                                      default [RR] (random-replacement)"
     );
 }
 
@@ -2103,6 +2116,7 @@ pmat_pre_clo_init(void)
     pmem.pmat_preserve_bin_on_error = False;
     pmem.pmat_aggregate_dump_only = False;
     pmem.pmat_terminate_on_error = False;
+    pmem.pmat_eviction_policy_str = "RR";
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)

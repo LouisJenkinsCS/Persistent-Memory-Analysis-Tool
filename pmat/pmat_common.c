@@ -17,7 +17,24 @@
 #include "pub_tool_mallocfree.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_libcassert.h"
+#include "pub_tool_vki.h"
+#include "pub_tool_libcfile.h"
 #include "pmat_include.h"
+
+
+UInt get_urandom(void) {
+    int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+    if (fd < 0) {
+        VG_(emit)("Could not open /dev/urandom, defaulting to static seed...");
+        return 0;
+    }
+
+    UInt ret;
+    VG_(read)(fd, &ret, sizeof(UInt));
+    VG_(close)(fd);
+    return ret;
+}
+
 
 Word cmp_pmat_write_buffer_entries(const void *key, const void *elem) {
     const struct pmat_writeback_buffer_entry *lhs = (const struct pmat_writeback_buffer_entry *) (key);
@@ -168,6 +185,7 @@ struct pmat_lru_node *splay(struct pmat_lru_node *root, Addr key)
 struct pmat_lru_cache *pmat_create_lru(void) {
     struct pmat_lru_cache *cache = VG_(malloc)("lru.cache", (SizeT)sizeof(struct pmat_lru_cache));
     cache->root = NULL;
+    cache->seed = get_urandom();
     return cache;
 }
 
@@ -203,7 +221,7 @@ void pmat_lru_cache_insert(struct pmat_lru_cache *cache, Addr key, void *value) 
 }
 
 // Evicts an entry from the LRU Cache; returns evicted value
-void *pmat_lru_cache_evict(struct pmat_lru_cache *cache, UInt *seed) {
+void *pmat_lru_cache_evict(struct pmat_lru_cache *cache) {
     // Stochastic traversal...
     struct pmat_lru_node *node = cache->root;
     struct pmat_lru_node *parent = NULL;
@@ -215,7 +233,7 @@ void *pmat_lru_cache_evict(struct pmat_lru_cache *cache, UInt *seed) {
             break;
         }
         parent = node;
-        UInt x = VG_(random)(seed) % 100;
+        UInt x = VG_(random)(&cache->seed) % 100;
         UInt total = node->num_left + node->num_right;
         UInt probLeft = (node->num_left / ((Double) total)) * 100;
         if (x <= probLeft) {
@@ -268,4 +286,103 @@ void *pmat_lru_cache_lookup(struct pmat_lru_cache *cache, Addr key) {
 // Obtains the size of the LRU Cache
 Int pmat_lru_cache_size(struct pmat_lru_cache *cache) {
     return (cache->root) ? (cache->root->num_left + cache->root->num_right + 1) : 0;
+}
+
+void *pmat_lru_cache_remove(struct pmat_lru_cache *cache, Addr key) {
+    tl_assert2(0, "NOT IMPLEMENTED!");
+}
+
+void **pmat_lru_cache_to_array(struct pmat_lru_cache *cache, SizeT *sz) {
+    tl_assert2(0, "NOT IMPLEMENTED!");
+}
+
+
+// Create LRU cache utilizing a comparator
+struct pmat_rr_cache *pmat_create_rr(void) {
+    struct pmat_rr_cache *cache = VG_(malloc)("pmat.pmat_rr_cache", sizeof(struct pmat_rr_cache));
+    cache->htable = VG_(HT_construct)("pmat.pmat_rr_cache.htable");
+    cache->seed = get_urandom();
+    cache->size = 0;
+    return cache;
+}
+
+// Insert key and value into RR Cache.
+void pmat_rr_cache_insert(struct pmat_rr_cache *cache, Addr key, void *value) {
+    tl_assert2(VG_(HT_lookup)(cache->htable, key) == NULL, "Found existing cache-line for %lu!\n", key);
+    struct pmat_htable_entry *entry = VG_(malloc)("htable.entry", sizeof(struct pmat_htable_entry));
+    entry->next = NULL;
+    entry->key = key;
+    entry->value = value;
+    VG_(HT_add_node)(cache->htable, entry);
+    // tl_assert(VG_(HT_lookup)(cache->htable, key) != NULL);
+    cache->size++;
+}
+
+// Evicts an entry from the RR Cache; returns evicted value
+void *pmat_rr_cache_evict(struct pmat_rr_cache *cache) {
+    struct PMAT_VgHashTable *htable = cache->htable;
+    struct pmat_htable_entry **entries = htable->chains;
+    // Take a random index
+    UInt idx = VG_(random)(&cache->seed) % htable->n_chains;
+    UInt loops = 0;
+    while (htable->chains[idx] == NULL) {
+        tl_assert2(loops != htable->n_chains, "Infinite Loop over VGHashTable Chains!");
+        idx = (idx + 1) % htable->n_chains;
+        loops++;
+    }
+    UInt chainSize = 0;
+    for (struct pmat_htable_entry *entry = htable->chains[idx]; entry != NULL; entry = entry->next) {
+        chainSize += 1;
+    }
+    tl_assert2(chainSize >= 1, "Somehow have a chainSize of %lu\n", chainSize);
+    UInt chainIdx = (chainSize > 1) ? (VG_(random)(&cache->seed) % chainSize) : 0;
+    for (struct pmat_htable_entry *entry = htable->chains[idx]; entry != NULL; entry = entry->next) {
+        if (chainIdx == 0) {
+            // Found it...
+            entry = VG_(HT_remove)(cache->htable, entry->key);
+            tl_assert2(entry != NULL, "Somehow cannot remove current entry!");
+            void *retval = entry->value;
+            VG_(free)(entry);
+            return retval;   
+        }
+        chainIdx--;
+    }
+    tl_assert2(0, "Somehow did not find node we were going to evict!!!");
+}
+
+// Searches the RR cache; if present, returns value and splays; returns NULL if not found
+void *pmat_rr_cache_lookup(struct pmat_rr_cache *cache, Addr key) {
+    struct pmat_htable_entry *entry = VG_(HT_lookup)(cache->htable, key);
+    if (entry == NULL) {
+        return NULL;
+    } 
+    return entry->value;
+}
+
+// Removes a key from LRU Cache; will return value if found, else NULL
+void *pmat_rr_cache_remove(struct pmat_rr_cache *cache, Addr key) {
+    struct pmat_htable_entry *entry = VG_(HT_remove)(cache->htable, key);
+    if (entry == NULL) {
+        return NULL;
+    }
+    void *retval = entry->value;
+    VG_(free)(entry);
+    cache->size--;
+    return retval;
+}
+
+// Obtains the size of the RR Cache
+Int pmat_rr_cache_size(struct pmat_rr_cache *cache) {
+    return cache->size;
+}
+
+void **pmat_rr_cache_to_array(struct pmat_rr_cache *cache, SizeT *sz) {
+    UInt size;
+    struct pmat_htable_entry **entries = VG_(HT_to_array)(cache->htable, &size);
+    void **retval = VG_(malloc)("pmat.pmat_rr_cache.to_array", sizeof(void *) * size);
+    for (int i = 0; i < size; i++) {
+        retval[i] = entries[i]->value;
+    }
+    *sz = size;
+    return retval;
 }
