@@ -147,6 +147,8 @@ static ULong sblocks = 0;
 
 static void stringify_stack_trace(ExeContext *context, int fd);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
+static void maybe_simulate_crash(void);
+
 
 static Int cmp_flush_locations(struct pmat_flush_location *loc1, struct pmat_flush_location *loc2) {
     Int retval = cmp_exe_context_pointers(&loc1->store, &loc2->store);
@@ -169,7 +171,7 @@ static void *eviction_lookup(Addr key) {
     return pmem.pmat_eviction_policy.lookup(pmem.pmat_eviction_policy.arg, key);
 }
 
-static void eviction_add(Addr key, void *value) {
+static void eviction_insert(Addr key, void *value) {
     pmem.pmat_eviction_policy.insert(pmem.pmat_eviction_policy.arg, key, value);
 }
 
@@ -337,6 +339,7 @@ static void write_to_file(struct pmat_writeback_buffer_entry *entry) {
             bytes[i] = entry->entry->data[i];
         }
     }
+    maybe_simulate_crash();
 }
 
 /**
@@ -869,14 +872,13 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
         VG_(memset)(new_entry->data, 0, CACHELINE_SIZE);
         VG_(memcpy)(new_entry->data + OFFSET_CACHELINE(addr), &value, size);
         new_entry->dirtyBits |= ((1ULL << ((ULong) size)) - 1ULL) << startOffset;
-        eviction_add(TRIM_CACHELINE(addr), new_entry);
+        eviction_insert(TRIM_CACHELINE(addr), new_entry);
         // Check if we need to evict...
         if (eviction_size() > pmem.pmat_num_cache_entries) {
             struct pmat_cache_entry *entry = eviction_evict();
             do_writeback(new_entry, False);
         }
     }
-    maybe_simulate_crash();
 }
 
 // Unused...
@@ -1278,9 +1280,7 @@ _do_fence(void)
 static void
 do_fence(void)
 {
-    maybe_simulate_crash();
     _do_fence();
-    maybe_simulate_crash();
 }
 
 static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {    
@@ -1378,7 +1378,6 @@ trace_pmem_flush(Addr addr)
 {
     /* use native cache size for flush */
     do_flush(addr, PMAT_CACHELINE_SIZE);
-    maybe_simulate_crash();
 }
 
 /*
@@ -1392,7 +1391,6 @@ trace_pmem_flush_fence(Addr addr)
 {
     do_flush(addr, PMAT_CACHELINE_SIZE);
     _do_fence();
-    maybe_simulate_crash();
 }
 
 /**
@@ -1849,7 +1847,6 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
 
         case VG_USERREQ__PMC_DO_FLUSH: {
             do_flush(arg[1], arg[2]);
-            maybe_simulate_crash();
             break;
         }
 
