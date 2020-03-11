@@ -58,16 +58,16 @@ void DurableQueue_init(struct DurableQueue *dq, struct DurableQueueNode *node) T
 }
 
 void DurableQueue_free(struct DurableQueueNode *node, struct DurableQueue *dq) TRANSIENT {
-	static atomic_uintptr_t last_node = 0;
-	static atomic_uintptr_t last_thread = -1;
-	int lasttid = atomic_load(&last_thread);
-	if (atomic_load(&last_node) == node) {
-		uintptr_t tmp = atomic_load(&last_node);
-		if (tmp == node) {
-			printf("CALLED TWICE!!!Current thread is %ld but last thread was %ld!\n", omp_get_thread_num(), lasttid);
-			assert(0);
-		}
-	}
+	// static atomic_uintptr_t last_node = 0;
+	// static atomic_uintptr_t last_thread = -1;
+	// int lasttid = atomic_load(&last_thread);
+	// if (atomic_load(&last_node) == node) {
+	// 	uintptr_t tmp = atomic_load(&last_node);
+	// 	if (tmp == node) {
+	// 		printf("CALLED TWICE!!!Current thread is %ld but last thread was %ld!\n", omp_get_thread_num(), lasttid);
+	// 		assert(0);
+	// 	}
+	// }
 	atomic_store(&node->free_list_next, 0);
 	atomic_store(&node->next, 0);
 	FLUSH(&node->next);
@@ -85,8 +85,8 @@ void DurableQueue_free(struct DurableQueueNode *node, struct DurableQueue *dq) T
 		assert(head != (uintptr_t) node);
 		atomic_store(&node->free_list_next, head);
 	} while(!atomic_compare_exchange_strong(&dq->free_list, &head, (uintptr_t) node));
-	atomic_store(&last_node, node);
-	atomic_store(&last_thread, omp_get_thread_num());
+	// atomic_store(&last_node, node);
+	// atomic_store(&last_thread, omp_get_thread_num());
 }
 
 // Currently, this data structure expects an _entire_ region of "persistent" memory
@@ -278,7 +278,9 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 
 	// Set and flush value to be written.
 	node->value = value;
+	#if DURABLE_QUEUE_BUG != 1
 	FLUSH(&node->value);
+	#endif
 
 	while (1) {
 		struct DurableQueueNode *last = (void *) atomic_load(&dq->tail);
@@ -290,17 +292,19 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 		if (last == (void *) atomic_load(&dq->tail)) {
 			if (next == NULL) {
 				if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
+					#if DURABLE_QUEUE_BUG != 2
 					FLUSH(&last->next);
+					#endif
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
-					FLUSH(&dq->tail);
 					post_enqueue(dq);
 					hazard_release(last, false);
 					return true;
 				}
 			} else {
+				#if DURABLE_QUEUE_BUG != 3
 				FLUSH(&last->next);
+				#endif
 				atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
-				FLUSH(&dq->tail);
 			}
 		} 
 	}
@@ -331,8 +335,10 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					hazard_release(next, false);
 					return DQ_EMPTY;
 				} else {
+					#if DURABLE_QUEUE_BUG != 4
 					// Outdated tail
 					FLUSH(&last->next);
+					#endif
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
 				}
 			} else {
@@ -342,7 +348,9 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				assert(tid != -1);
 				int_least64_t expected_tid = -1;
 				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
+					#if DURABLE_QUEUE_BUG != 5
 					FLUSH(&dq->head);
+					#endif
 					hazard_release(first, true);
 					post_dequeue(dq);
 					return retval;

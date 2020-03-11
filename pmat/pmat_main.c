@@ -36,6 +36,7 @@
 #include "pub_tool_debuginfo.h"
 #include "pmat.h"
 #include "pmat_include.h"
+#include "pub_core_scheduler.h"
 #include "pub_tool_vki.h"
 
 /* track at max this many multiple overwrites */
@@ -144,6 +145,9 @@ typedef struct {
     IRAtom *guard; /* :: Ity_I1, or NULL=="always True" */
     IRAtom *value;
 } Event;
+
+extern Bool VG_(randomize_quantum);
+extern UInt VG_(quantum_seed);
 
 /** Number of sblock run. */
 static ULong sblocks = 0;
@@ -890,6 +894,7 @@ static VG_REGPARM(3) void trace_pmem_store_dword(Addr addr, UWord value1, UWord 
     trace_pmem_store(addr, sizeofIRType(Ity_I64), value2);
 }
 
+
 /**
 * \brief Register the entry of a new SB.
 *
@@ -1387,7 +1392,8 @@ trace_pmem_flush(Addr addr)
     Handles CLFLUSH which is a flush+fence combination; this will ensure that
     a simulation of a crash does not occur in between the flush and the fence,
     eliminating any cases of false positives of 'leaked cache lines'. This will
-    call flush and fence in a way that no simulated crash occurs in between them.
+    call flush and fence 
+(base) louisjenkinscs@pop-os:~/GitHub/Persistent-Memory-Anain a way that no simulated crash occurs in between them.
 */
 static VG_REGPARM(1) void
 trace_pmem_flush_fence(Addr addr) 
@@ -2117,6 +2123,8 @@ pmat_pre_clo_init(void)
     pmem.pmat_aggregate_dump_only = False;
     pmem.pmat_terminate_on_error = False;
     pmem.pmat_eviction_policy_str = "RR";
+    VG_(quantum_seed) = get_urandom();
+    VG_(randomize_quantum) = True;
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)

@@ -106,10 +106,15 @@
 /* Defines the thread-scheduling timeslice, in terms of the number of
    basic blocks we attempt to run each thread for.  Smaller values
    give finer interleaving but much increased scheduling overheads. */
-#define SCHEDULING_QUANTUM   100000
+#define SCHEDULING_QUANTUM   1000
 
 /* If False, a fault is Valgrind-internal (ie, a bug) */
 Bool VG_(in_generated_code) = False;
+
+/* Determines whether we use a static quantum or randomized version. */
+Bool VG_(randomize_quantum) = False;
+/* Randomized Seed for quantum. */
+UInt VG_(quantum_seed) = 0;
 
 /* 64-bit counter for the number of basic blocks done. */
 static ULong bbs_done = 0;
@@ -1363,6 +1368,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
    
    vg_assert(VG_(is_running_thread)(tid));
 
+
    dispatch_ctr = SCHEDULING_QUANTUM;
 
    while (!VG_(is_exiting)(tid)) {
@@ -1414,7 +1420,11 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 n_scheduling_events_MAJOR++;
 
 	 /* Figure out how many bbs to ask vg_run_innerloop to do. */
+    if (VG_(randomize_quantum)) {
+       dispatch_ctr = (VG_(random)(&VG_(quantum_seed)) % SCHEDULING_QUANTUM) + 1;
+    } else {
          dispatch_ctr = SCHEDULING_QUANTUM;
+    }
 
 	 /* paranoia ... */
 	 vg_assert(tst->tid == tid);

@@ -298,7 +298,11 @@ namespace DurableQueue
                         }
                         next = _head->freeNext;
                     } while (!freeHead.CAS(_head, next));
-                    _head->freeNext = nullptr;
+
+                    // Sanitize
+                    _head.to_ptr()->freeNext = nullptr;
+                    _head.to_ptr()->next = nullptr;
+                    _head.to_ptr()->obj = NilT;
                     return _head.to_ptr();
                 }
 
@@ -316,7 +320,65 @@ namespace DurableQueue
                Memory::DWord::ABAPtr<FreeListNode<T>> freeHead;
                // AllocList for FreeList
                std::atomic<FreeListNode<T>*> allocHead;
-               
+        };
+
+        template <class T>
+        class EpochManager {
+            public:
+                EpochManager(std::function<void(T)> freeFn) : globalEpoch(0) {
+                    for (int i = 0; i < DQ_MAX_THREADS; i++) {
+                        this->localEpochs[i].store(UINT64_MAX);
+                    }
+                    this->advancingEpoch.clear();
+                    this->freeFn = freeFn;
+                }
+
+                // Enter read-side critical section
+                void acquire(int tid) {
+                    this->localEpochs[tid] = this->globalEpoch.load();
+                }
+
+                void reclaim(T t) {
+                    this->limboLists[this->globalEpoch.load() % 3].push(t);
+                }
+
+                void advance() {
+                    if (this->advancingEpoch.test_and_set() == false) {
+                        uint64_t min = UINT64_MAX;
+                        for (auto& epoch : this->localEpochs) {
+                            min = std::min(min, epoch.load());
+                        }
+                        uint64_t e = this->globalEpoch.load();
+                        if (min == e || min == UINT64_MAX) {
+                            this->globalEpoch += 1;
+                        }
+                        
+                        // Reclaim epoch `e - 2`
+                        int idx = (e - 2) % 3;
+                        assert(idx >= 0 && idx <= 2);
+                        auto& ll = this->limboLists[idx];
+                        auto *node = ll.pop();
+                        int reclaimed = 0;
+                        while (node) {
+                            reclaimed++;
+                            this->freeFn(node);
+                            node = ll.pop();
+                        }
+                        std::cout << "Reclaimed " << reclaimed << std::endl;
+                        this->advancingEpoch.clear();
+                    }
+                }
+
+                void release(int tid) {
+                    this->localEpochs[tid] = UINT64_MAX;
+                }
+
+            private:
+                std::function<void(T)> freeFn;
+                std::atomic_flag advancingEpoch;
+                std::atomic<uint64_t> globalEpoch;
+                std::atomic<uint64_t> localEpochs[DQ_MAX_THREADS];
+                FreeList<T> limboLists[3];
         };
     }
 
@@ -367,13 +429,9 @@ namespace DurableQueue
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
                 this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
-                for (auto &ll : this->limboList) ll = new Memory::FreeList<DurableQueueNode<T, NilT>*>();
-                this->globalEpoch = 0;
-                for (auto& epoch : this->threadEpochs) {
-                    epoch = UINT64_MAX;
-                }
-                this->advancingEpoch.clear();
-
+                this->epochManager = new Memory::EpochManager<DurableQueueNode<T, NilT>*>(
+                    [this](DurableQueueNode<T, NilT> *node) { this->freeList->push(node); }
+                );
                 // Initialize allocList
                 int allocSz = 0;
                 while (allocSz + sizeof(DurableQueueNode<T, NilT>) < sz) {
@@ -397,16 +455,12 @@ namespace DurableQueue
                 dummy->obj = NilT;
                 this->head.store(dummy);
                 this->tail.store(dummy);
-
-                this->hazardPtrs = new HazardPointers<DurableQueueNode<T, NilT>>(
-                    [this](DurableQueueNode<T, NilT> *node) { this->freeList->push(node); }, DQ_MAX_THREADS
-                );
                 this->recoverable = true;
             }
 
             bool enqueue(T t, int tid) {
                 // Enter Epoch
-                this->threadEpochs[tid].store(this->globalEpoch.load());
+                this->epochManager->acquire(tid);
                 DurableQueueNode<T, NilT> *node = freeList->pop();
                 if (!node) return false;
                 node->deqThreadID = -1;
@@ -420,7 +474,6 @@ namespace DurableQueue
                 int backoffTime = 1;
                 while (true) {
                     auto last = tail.load();
-                    hazardPtrs->protectPtr(0, last, tid);
                     assert(last != nullptr);
                     auto next = last->next.load();
                     if (last == tail.load()) {
@@ -431,7 +484,7 @@ namespace DurableQueue
                                 DQ_FLUSH(&tail);
                                 numEnqueues += 1;
                                 DQ_FLUSH(&numEnqueues);
-                                this->threadEpochs[tid].store(UINT64_MAX);
+                                this->epochManager->release(tid);
                                 return true;
                             }
                         } else {
@@ -466,13 +519,10 @@ namespace DurableQueue
             // Attempts to recover the current queue from intermediate state; resets all transient variables
             RecoveryStatus recover(uint8_t *heap, size_t sz) {
                 if (!this->recoverable) return Uninitialized;
-                bool gt = heap > this->heap;
-                uintptr_t off = gt ? (heap - this->heap) : (this->heap - heap);
-                std::cout << "Old Heap: " << (void *) this->heap << ", New Heap: " << (void *) heap << ", Offset = " << off << std::endl;
                 this->heap = heap;
                 this->freeList = new Memory::FreeList<DurableQueueNode<T, NilT> *>();
                 this->allocList = new std::vector<DurableQueueNode<T, NilT> *>();
-                this->hazardPtrs = nullptr;
+                this->epochManager = nullptr;
 
                 // Initialize allocList
                 int allocSz = 0;
@@ -483,33 +533,9 @@ namespace DurableQueue
 
                 // Initialize freeList based on what is reachable in the queue...
                 std::set<DurableQueueNode<T, NilT>*> reachable;
-                // Repair queue by redirecting pointers
-                if (gt) {
-                    this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) + off));
-                    if (this->head.load()->next.load()) {
-                        this->head.load()->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t*>(this->head.load()->next.load()) + off));
-                    }
-                    this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) + off));
-                } else {
-                    this->head.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->head.load()) - off));
-                    if (this->head.load()->next.load()) {
-                        this->head.load()->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t*>(this->head.load()->next.load()) - off));
-                    }
-                    this->tail.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(this->tail.load()) - off));
-                }
                 
                 for (DurableQueueNode<T, NilT> *node = this->head.load(); node != NULL; node = node->next.load()) {
                     reachable.insert(node);
-                    if (node != this->head.load() && node->next.load()) {
-                        std::cout << "Node being processed: " << node << std::endl;
-                        if (gt) {
-                            node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) + off));
-                            std::cout << "Updated next to address: " << reinterpret_cast<void*>(node->next.load()) << std::endl;
-                        } else {
-                            node->next.store(reinterpret_cast<DurableQueueNode<T, NilT>*>(reinterpret_cast<uint8_t *>(node->next.load()) - off));
-                            std::cout << "Updated next to address: " << reinterpret_cast<void*>(node->next.load()) << std::endl;
-                        }
-                    }
 
                     if (node->obj == NilT) {
                         std::cerr << "Found a uninitialized NilT(" << NilT << ") value in a node!" << std::endl;
@@ -533,7 +559,7 @@ namespace DurableQueue
                     }
                 }
 
-                // Number of enqueues - number of dequeues should be within DQ_MAX_THREADS of reachable nodes.
+                // Number of Enqueue - number of dequeue should be within DQ_MAX_THREADS of reachable nodes.
                 if (reachable.size() + DQ_MAX_THREADS > (this->numEnqueues - this->numDequeues) && (this->numEnqueues - this->numDequeues) > reachable.size() - DQ_MAX_THREADS) {
                     return Initialized;
                 } else {
@@ -543,13 +569,12 @@ namespace DurableQueue
             }
 
             T dequeue(int tid) {
-                this->threadEpochs[tid].store(this->globalEpoch);
+                this->epochManager->acquire(tid);
                 retvals[tid] = NilT;
                 DQ_FLUSH(&retvals[tid]);
 
                 while(true) {
                     auto _head = head.load();
-                    // hazardPtrs->protectPtr(0, _head, tid);
                     auto _tail = tail.load();
                     if (head.load() != _head) {
                         continue;
@@ -563,9 +588,7 @@ namespace DurableQueue
                     if (_head == _tail) {
                         if (next == nullptr) {
                             retvals[tid] = EmptyT;
-                            // hazardPtrs->clearOne(0, tid);
-                            // hazardPtrs->clearOne(1, tid);
-                            this->threadEpochs[tid].store(UINT64_MAX);
+                            this->epochManager->release(tid);
                             return EmptyT;
                         } else {
                             tail.compare_exchange_strong(_tail, next);
@@ -575,31 +598,11 @@ namespace DurableQueue
                         int expectedID = -1;
                         if (head.compare_exchange_strong(_head, next)) {
                             DQ_FLUSH(&head);
-                            // hazardPtrs->retire(_head, tid);
                             numDequeues += 1;
                             DQ_FLUSH(&numDequeues);
-                            this->threadEpochs[tid].store(UINT64_MAX);
-                            // TODO: Need to keep track of the number of operations since last advanced epoch.
-                            if (!this->advancingEpoch.test_and_set()) {
-                                uint64_t min = UINT64_MAX;
-                                for (auto& epoch : this->threadEpochs) {
-                                    min = std::min(min, epoch.load());
-                                }
-                                uint64_t e = this->globalEpoch;
-                                if (min == e || min == UINT64_MAX) {
-                                    this->globalEpoch += 1;
-                                }
-                                // Reclaim epoch `e - 2`
-                                int idx = (e - 2) % 3;
-                                assert(idx >= 0 && idx <= 2);
-                                auto& ll = this->limboList[idx];
-                                auto *node = ll->pop();
-                                while (node) {
-                                    this->freeList->push(node);
-                                    node = ll->pop();
-                                }
-                                this->advancingEpoch.clear();
-                            }
+                            this->epochManager->reclaim(_head);
+                            this->epochManager->release(tid);
+                            this->epochManager->advance();
                             return retval;
                         }
                     }
@@ -629,16 +632,8 @@ namespace DurableQueue
             Memory::FreeList<DurableQueueNode<T, NilT>*> *freeList;
             // Transient AllocList
             std::vector<DurableQueueNode<T, NilT>*>* allocList;
-            // Transient HazardPointers
-            HazardPointers<DurableQueueNode<T, NilT>>* hazardPtrs;
-            // Transient Global Epoch
-            std::atomic<uint64_t> globalEpoch;
-            // Transient Local Epochs
-            std::atomic<uint64_t> threadEpochs[DQ_MAX_THREADS];
-            // Transient Limbo Lists
-            Memory::FreeList<DurableQueueNode<T, NilT>*> *limboList[3];
-            // Transient Epoch-Advancing Atomic Flag
-            std::atomic_flag advancingEpoch;
+            // Transient EpochManager
+            Memory::EpochManager<DurableQueueNode<T, NilT>*> *epochManager;
     };
 
     // Note: Not thread safe...

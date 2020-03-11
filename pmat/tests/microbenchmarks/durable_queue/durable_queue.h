@@ -35,6 +35,7 @@ PERSISTENT struct DurableQueue {
     atomic_uintptr_t tail;
     // Persistent pointer to a persistent integer
     int returnedValues[MAX_THREADS];
+    int returnedValueStatus[MAX_THREADS];
     void *heap_base;
     TRANSIENT atomic_uintptr_t free_list;
     TRANSIENT atomic_uintptr_t alloc_list;
