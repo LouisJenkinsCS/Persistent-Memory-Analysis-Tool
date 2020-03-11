@@ -92,6 +92,9 @@ static struct pmem_ops {
     Double pmat_eviction_prob;
     /** Probability of crash occurring... Defaults to 0.01. */
     Double pmat_crash_prob;
+    /** Lowest probability of crash occurring... defaults 0.5 * base probability */
+    Double pmat_min_crash_prob;
+    /** Highest probability of crash occurring... defaults to 1.5 * base probability */
     /** Number of cache entries... Defaults to 1024 * 1024 (64MBs of Cache) */
     Word pmat_num_cache_entries;
     /** Number of write-back reordering buffer entries... Defaults to 128 * 1024 (8MBs of Cache) */
@@ -815,7 +818,7 @@ static void simulate_crash(void) {
 
 static void maybe_simulate_crash(void) {
     if (!pmem.pmat_should_verify || !pmem.pmat_verifier || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
-    if ((get_random() % 100) <= pmem.pmat_crash_prob) {
+    if ((get_random() % 100) <= (pmem.pmat_crash_prob * 100)) {
         simulate_crash();
     }
 }
@@ -1334,7 +1337,7 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
         VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
         struct pmat_writeback_buffer_entry *tmp;
         while ( (tmp = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries)) ) {
-            if ((get_random() % 100) <= pmem.pmat_eviction_prob) {
+            if ((get_random() % 100) <= pmem.pmat_eviction_prob * 100) {
                 VG_(addToXA)(arr, &tmp); 
             }
         }
