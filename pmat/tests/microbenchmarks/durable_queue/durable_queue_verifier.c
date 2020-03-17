@@ -13,7 +13,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define N (1024)
+#ifndef N
+#define N (1024 * 1024)
+#endif
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
 int main(int argc, char *argv[]) {

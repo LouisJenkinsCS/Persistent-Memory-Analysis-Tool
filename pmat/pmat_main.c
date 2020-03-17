@@ -1270,8 +1270,8 @@ _do_fence(void)
     //VG_(emit)("Fencing %u entries for tid %lu\n", nEntries, tid);
     for (int i = 0; i < nEntries; i++) {
         wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
-        write_to_file(wbentry);
         VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+        write_to_file(wbentry);
         VG_(free)(wbentry->entry);
         VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
     }
@@ -1321,8 +1321,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
     wblookup.entry = entry;
     struct pmat_writeback_buffer_entry *exist = VG_(OSetGen_Lookup)(pmem.pmat_writeback_buffer_entries, &wblookup);
     if (exist) {
-       write_to_file(exist);
        VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, exist);
+       write_to_file(exist);
        VG_(free)(exist->entry);
        VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, exist);
     }
@@ -1349,8 +1349,8 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
         Word nEntries = VG_(sizeXA)(arr);
         for (int i = 0; i < nEntries; i++) {
             wbentry = *(struct pmat_writeback_buffer_entry **) VG_(indexXA)(arr, i);
-            write_to_file(wbentry);
             VG_(OSetGen_Remove)(pmem.pmat_writeback_buffer_entries, wbentry);
+            write_to_file(wbentry);
             VG_(free)(wbentry->entry);
             VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, wbentry);
         }

@@ -16,6 +16,8 @@ struct DurableQueueNode *DurableQueueNode_create(void *heap, int value) PERSISTE
 	FLUSH(&node->deqThreadID);
 	node->next = 0;
 	FLUSH(&node->next);
+	node->seqNumber = 0;
+	FLUSH(&node->seqNumber);
 	PMAT_TRANSIENT(&node->alloc_list_next, sizeof(node->alloc_list_next));
 	PMAT_TRANSIENT(&node->free_list_next, sizeof(node->free_list_next));
 	node->alloc_list_next = 0;
@@ -109,6 +111,8 @@ struct DurableQueue *DurableQueue_create(void *heap, size_t sz) PERSISTENT {
 
 	// Setup sentinel node
 	struct DurableQueueNode *node = DurableQueue_alloc(dq);
+	node->seqNumber = 1;
+	FLUSH(&node->seqNumber);
 	assert(node != NULL);
 	dq->head = ATOMIC_VAR_INIT((uintptr_t) node);
 	FLUSH(&dq->head);
@@ -158,6 +162,7 @@ bool DurableQueue_verify(void *heap, size_t sz) {
 			fprintf(stderr, "Reachable node has a value of -1!\n");
 			return false;
 		}
+		if (!node->next) atomic_store(&dq->tail, (uintptr_t) node);
 		actualNodesFound++;
 	}
 
@@ -167,7 +172,16 @@ bool DurableQueue_verify(void *heap, size_t sz) {
 	}
 
 	if (actualNodesFound < expectedNodesFound - MAX_THREADS) {
-		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, numEnqueue, numDequeue);
+		fprintf(stderr, "[Metadata] Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, numEnqueue, numDequeue);
+		return false;
+	}
+	
+	expectedNodesFound = 0;
+	struct DurableQueueNode *head = dq->head;
+	struct DurableQueueNode *tail = dq->tail;
+	expectedNodesFound = tail->seqNumber - head->seqNumber + 1;
+	if (actualNodesFound != expectedNodesFound) {
+		fprintf(stderr, "[Sequence Number] Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, tail->seqNumber, head->seqNumber);
 		return false;
 	}
 	return true;
@@ -227,6 +241,7 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
 	dq->tail += off;
 	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
 		if (node->next) node->next += off;
+		if (!node->next) atomic_store(&dq->tail, (uintptr_t) node);
 	}
 
 	// Reclaim
@@ -251,9 +266,18 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
 		actualNodesFound++;
 	}
 
-	if (actualNodesFound < expectedNodesFound) {
-		fprintf(stderr, "Only found %ld nodes but expected to find at least %ld!\n", actualNodesFound, expectedNodesFound);
-		return NULL;
+	if (actualNodesFound < expectedNodesFound - MAX_THREADS) {
+		fprintf(stderr, "[Metadata] Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, numEnqueue, numDequeue);
+		return false;
+	}
+
+	expectedNodesFound = 0;
+	struct DurableQueueNode *head = dq->head;
+	struct DurableQueueNode *tail = dq->tail;
+	expectedNodesFound = tail->seqNumber - head->seqNumber + 1;
+	if (actualNodesFound != expectedNodesFound) {
+		fprintf(stderr, "[Sequence Number] Only found %ld nodes but expected to find at least %ld (%ld, %ld)!\n", actualNodesFound, expectedNodesFound, tail->seqNumber, head->seqNumber);
+		return false;
 	}
 	return dq;
 }
@@ -291,6 +315,8 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 		struct DurableQueueNode *next = (void *) atomic_load(&last->next);
 		if (last == (void *) atomic_load(&dq->tail)) {
 			if (next == NULL) {
+				node->seqNumber = last->seqNumber + 1;
+				FLUSH(&node->seqNumber);
 				if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
 					#if DURABLE_QUEUE_BUG != 2
 					FLUSH(&last->next);

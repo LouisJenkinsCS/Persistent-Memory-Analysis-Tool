@@ -21,6 +21,7 @@ PERSISTENT struct DurableQueueNode {
     int value;
     atomic_int_least64_t deqThreadID;
     atomic_uintptr_t next;
+    int seqNumber;
     TRANSIENT atomic_uintptr_t free_list_next;
     TRANSIENT atomic_uintptr_t alloc_list_next;
 };
