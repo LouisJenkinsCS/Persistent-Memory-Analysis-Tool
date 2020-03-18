@@ -42,6 +42,7 @@ static struct sched_lock_ops const *const sched_lock_impl[] = {
    [sched_lock_generic] = &ML_(generic_sched_lock_ops),
 #ifdef ENABLE_LINUX_TICKET_LOCK
    [sched_lock_ticket]  = &ML_(linux_ticket_lock_ops),
+   [sched_random_lock] = &ML_(random_lock_ops),
 #endif
 };
 

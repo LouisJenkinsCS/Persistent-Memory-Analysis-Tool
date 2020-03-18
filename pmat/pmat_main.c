@@ -503,12 +503,12 @@ static void dump_aggregate_to_file(void) {
     VG_(snprintf)(charbuf, 256, "Number of distinct cache-lines not made persistent: %u\n", VG_(OSetGen_Size)(pmem.pmat_aggregate_cache_dump));
     VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
 
-    ExeContext *entry;
+    ExeContext **entry;
     VG_(OSetGen_ResetIter)(pmem.pmat_aggregate_cache_dump);
     while ((entry = VG_(OSetGen_Next)(pmem.pmat_aggregate_cache_dump))) {
         VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
         VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
-        stringify_stack_trace(entry, fd);
+        stringify_stack_trace(*entry, fd);
         VG_(snprintf)(charbuf, 256, "~~~~~~~~~~~~~~~\n");
         VG_(write)(fd, charbuf, VG_(strlen(charbuf)));
     }

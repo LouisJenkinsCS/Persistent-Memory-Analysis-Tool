@@ -36,7 +36,7 @@
 
 struct sched_lock;
 
-enum SchedLockType { sched_lock_generic, sched_lock_ticket };
+enum SchedLockType { sched_lock_generic, sched_lock_ticket, sched_random_lock };
 
 Bool ML_(set_sched_lock_impl)(const enum SchedLockType t);
 const HChar *ML_(get_sched_lock_name)(void);

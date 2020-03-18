@@ -197,7 +197,7 @@ static void usage_NORETURN ( Bool debug_help )
 "         where hint is one of:\n"
 "           lax-ioctls lax-doors fuse-compatible enable-outer\n"
 "           no-inner-prefix no-nptl-pthread-stackcache fallback-llsc none\n"
-"    --fair-sched=no|yes|try   schedule threads fairly on multicore systems [no]\n"
+"    --fair-sched=no|yes|try|random   schedule threads fairly on multicore systems [no]\n"
 "    --kernel-variant=variant1,variant2,...\n"
 "         handle non-standard kernel variants [none]\n"
 "         where variant is one of:\n"
@@ -665,6 +665,8 @@ void main_process_cmd_line_options( void )
             VG_(clo_fair_sched) = try_fair_sched;
          else if (VG_(strcmp)(tmp_str, "no") == 0)
             VG_(clo_fair_sched) = disable_fair_sched;
+         else if (VG_(strcmp)(tmp_str, "random") == 0)
+            VG_(clo_fair_sched) = random_sched;
          else
             VG_(fmsg_bad_option)(arg,
                "Bad argument, should be 'yes', 'try' or 'no'\n");

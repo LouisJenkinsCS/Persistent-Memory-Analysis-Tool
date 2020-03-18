@@ -409,6 +409,7 @@ COREGRIND_SOURCES_COMMON = \
 	m_replacemalloc/replacemalloc_core.c \
 	m_scheduler/sched-lock.c \
 	m_scheduler/sched-lock-generic.c \
+	m_scheduler/random-lock.c \
 	m_scheduler/scheduler.c \
 	m_scheduler/sema.c \
 	m_sigframe/sigframe-common.c \
@@ -505,7 +506,7 @@ libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CCASFLAGS = \
     $(AM_CCASFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
 if ENABLE_LINUX_TICKET_LOCK_PRIMARY
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES += \
-    m_scheduler/ticket-lock-linux.c
+    m_scheduler/ticket-lock-linux.c m_scheduler/random-lock.c
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS += \
     -DENABLE_LINUX_TICKET_LOCK
 endif
@@ -527,7 +528,7 @@ libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CCASFLAGS = \
     $(AM_CCASFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
 if ENABLE_LINUX_TICKET_LOCK_SECONDARY
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES += \
-    m_scheduler/ticket-lock-linux.c
+    m_scheduler/ticket-lock-linux.c m_scheduler/random-lock.c
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS += \
     -DENABLE_LINUX_TICKET_LOCK
 endif

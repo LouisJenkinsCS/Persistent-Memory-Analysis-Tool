@@ -126,9 +126,11 @@ int main(int argc, char *argv[]) {
 	memset(heap, 0, SIZE);
 	PMAT_REGISTER("durable-queue.bin", heap, SIZE);
     struct DurableQueue *dq = DurableQueue_create(heap, SIZE);
+	#ifndef SKIP_SANITY_CHECK
 	printf("Sanity checking queue...\n");
 	check_queue(dq);
 	printf("Sanity check complete, beginning benchmark for %d seconds...\n", seconds);
+	#endif
 	PMAT_CRASH_ENABLE();
 	do_benchmark(dq, seconds);
 	PMAT_CRASH_DISABLE();

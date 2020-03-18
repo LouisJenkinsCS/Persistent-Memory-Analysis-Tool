@@ -692,6 +692,10 @@ ThreadId VG_(scheduler_init_phase1) ( void )
       VG_(exit)(1);
    }
 
+   if (VG_(clo_fair_sched) == random_sched) {
+      ML_(set_sched_lock_impl)(sched_random_lock);
+   }
+
    if (VG_(clo_verbosity) > 1) {
       VG_(message)(Vg_DebugMsg,
                    "Scheduler: using %s scheduler lock implementation.\n",

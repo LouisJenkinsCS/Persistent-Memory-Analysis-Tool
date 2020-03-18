@@ -45,6 +45,7 @@ struct sched_lock_ops {
 
 extern const struct sched_lock_ops ML_(generic_sched_lock_ops);
 extern const struct sched_lock_ops ML_(linux_ticket_lock_ops);
+extern const struct sched_lock_ops ML_(random_lock_ops);
 
 #endif   // __PRIV_SCHED_LOCK_IMPL_H
 
