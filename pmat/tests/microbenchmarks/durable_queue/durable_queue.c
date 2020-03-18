@@ -302,7 +302,7 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 
 	// Set and flush value to be written.
 	node->value = value;
-	#if DURABLE_QUEUE_BUG != 1
+	#if DURABLE_QUEUE_BUG & (1 << 0)
 	FLUSH(&node->value);
 	#endif
 
@@ -318,7 +318,7 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 				node->seqNumber = last->seqNumber + 1;
 				FLUSH(&node->seqNumber);
 				if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
-					#if DURABLE_QUEUE_BUG != 2
+					#if DURABLE_QUEUE_BUG & (1 << 1)
 					FLUSH(&last->next);
 					#endif
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
@@ -327,7 +327,7 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 					return true;
 				}
 			} else {
-				#if DURABLE_QUEUE_BUG != 3
+				#if DURABLE_QUEUE_BUG & (1 << 2)
 				FLUSH(&last->next);
 				#endif
 				atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) next);
@@ -361,7 +361,7 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					hazard_release(next, false);
 					return DQ_EMPTY;
 				} else {
-					#if DURABLE_QUEUE_BUG != 4
+					#if DURABLE_QUEUE_BUG & (1 << 3)
 					// Outdated tail
 					FLUSH(&last->next);
 					#endif
@@ -374,7 +374,7 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				assert(tid != -1);
 				int_least64_t expected_tid = -1;
 				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
-					#if DURABLE_QUEUE_BUG != 5
+					#if DURABLE_QUEUE_BUG & (1 << 4)
 					FLUSH(&dq->head);
 					#endif
 					hazard_release(first, true);
