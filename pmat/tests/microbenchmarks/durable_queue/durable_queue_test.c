@@ -71,16 +71,13 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 		printf("Number of threads: %d\n", omp_get_num_threads());
 		time_t end;
 
-		while (atomic_load(&status) != -1) {
-			#pragma omp taskyield
-			#pragma omp master
+		while (true) {
 			{
 				time(&end);
 				int time_taken = end - start;
 
 				if (time_taken >= seconds) {
-					atomic_store(&status, -1);
-					#pragma omp flush(status)
+					break;
 				}
 			}
 			

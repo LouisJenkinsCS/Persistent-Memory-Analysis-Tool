@@ -158,7 +158,7 @@ bool DurableQueue_verify(void *heap, size_t sz) {
 	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
 		if (node->next) node->next += off;
 		if (node == dq->tail) foundTail = true;
-		if (node->value == -1) {
+		if (node->value == -1 && node != dq->tail) {
 			fprintf(stderr, "Reachable node has a value of -1!\n");
 			return false;
 		}
@@ -259,7 +259,7 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
 	}
 	long actualNodesFound = 0;
 	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
-		if (node->value == -1) {
+		if (node->value == -1 && node != dq->tail) {
 			fprintf(stderr, "Reachable node has a value of -1!\n");
 			return NULL;
 		}
