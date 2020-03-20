@@ -20,6 +20,7 @@
 // Convenience Functions
 #define CLFLUSH(addr) asm volatile ("clflush (%0)" :: "r"(addr))
 #define CLFLUSHOPT(addr) asm volatile ("clflushopt (%0)" :: "r"(addr));
+#define SFENCE() asm volatile("sfence" : : : "memory")
 
 
 #define CREATE_HEAP(name, size) ({ \
