@@ -148,6 +148,7 @@ typedef struct {
 
 extern Bool VG_(randomize_quantum);
 extern UInt VG_(quantum_seed);
+extern UInt VG_(scheduling_quantum);
 
 /** Number of sblock run. */
 static ULong sblocks = 0;
@@ -1922,6 +1923,8 @@ pmat_process_cmd_line_option(const HChar *arg)
     else if VG_BOOL_CLO(arg, "--aggregate-dump-only", pmem.pmat_aggregate_dump_only) {}
     else if VG_BOOL_CLO(arg, "--terminate-on-error", pmem.pmat_terminate_on_error) {}
     else if VG_STR_CLO(arg, "--eviction-policy", pmem.pmat_eviction_policy_str) {}
+    else if VG_INT_CLO(arg, "--scheduling-quantum", VG_(scheduling_quantum)) {}
+    else if VG_BOOL_CLO(arg, "--randomize-quantum", VG_(randomize_quantum)) {}
     else return False;
 
     return True;
@@ -2009,7 +2012,11 @@ pmat_print_usage(void)
             "    --terminate-on-error=yes|no       Terminates the program on the first error occurred, rather than continuing execution.\n"
             "                                      default [no]\n"
             "    --eviction-policy=RR|LRU          Determines the eviction policy to be used.\n"
-            "                                      default [RR] (random-replacement)"
+            "                                      default [RR] (random-replacement).\n"
+            "    --randomize-quantum=yes|no        Whether the scheduling quantum should be randomized or not.\n"
+            "                                      default [yes]\n"
+            "    --scheduling-quantum=N            Number of blocks each thread will attempt to process per time quantum.\n"
+            "                                      default [1000]\n"
     );
 }
 
@@ -2125,6 +2132,7 @@ pmat_pre_clo_init(void)
     pmem.pmat_eviction_policy_str = "RR";
     VG_(quantum_seed) = get_urandom();
     VG_(randomize_quantum) = True;
+    VG_(scheduling_quantum) = 1000;
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pmat_pre_clo_init)
