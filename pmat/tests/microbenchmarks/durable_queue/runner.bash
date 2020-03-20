@@ -9,7 +9,7 @@ for i in `seq 0 20`; do
                     wbSize=$((1<<$j))
                     fname="cacheSize=$cacheSize-wbSize=$wbSize-sched=$sched-quantum=$quantum-randomize=$randomize"
                     echo "Running $fname"
-                    valgrind \
+                    `which time` -f %e valgrind \
                         --fair-sched=$sched \
                         --tool=pmat \
                         --aggregate-dump-only=yes \
