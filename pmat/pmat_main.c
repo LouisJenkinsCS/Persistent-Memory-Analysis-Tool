@@ -1954,14 +1954,18 @@ pmat_post_clo_init(void)
         "Simulated Processor Cache Capacity = %ld Entries\n"
         "Write-Back Reordering Buffer Capacity = %ld Entries\n"
         "RNG Seed = %x(%u)\n"
-        "Eviction Policy = %s\n",
+        "Eviction Policy = %s\n"
+        "Scheduling Quantum = %ld\n"
+        "Randomized Quantum = %s\n",
         pmem.pmat_verifier,
         pmem.pmat_eviction_prob * 100,
         pmem.pmat_crash_prob * 100,
         pmem.pmat_num_cache_entries,
         pmem.pmat_num_wb_entries,
         pmem.pmat_rng_seed, pmem.pmat_rng_seed,
-        pmem.pmat_eviction_policy_str
+        pmem.pmat_eviction_policy_str,
+        VG_(scheduling_quantum),
+        VG_(randomize_quantum) ? "true" : "false"
     );
 
     if (VG_(strncasecmp)(pmem.pmat_eviction_policy_str, "RR", 2) == 0) {
