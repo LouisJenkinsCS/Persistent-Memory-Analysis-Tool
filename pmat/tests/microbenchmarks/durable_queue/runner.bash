@@ -19,7 +19,7 @@ for i in `seq 0 20`; do
                         --num-cache-entries=$cacheSize \
                         --randomize-quantum=$randomize \
                         --scheduling-quantum=$quantum \
-                        ./durable_queue 300 &> $fname.out
+                        ./durable_queue 60 &> $fname.out
                     cat $fname.out
                 done
             done
