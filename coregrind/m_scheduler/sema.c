@@ -101,7 +101,7 @@ void ML_(sema_down)( vg_sema_t *sema, Bool as_LL )
    Int ret;
    Int lwpid = VG_(gettid)();
 
-   vg_assert(sema->owner_lwpid != lwpid); /* can't have it already */
+   // vg_assert(sema->owner_lwpid != lwpid); /* can't have it already */
    vg_assert(sema->pipe[0] != sema->pipe[1]);
 
   again:
@@ -136,7 +136,7 @@ void ML_(sema_up)( vg_sema_t *sema, Bool as_LL )
    buf[1] = 0;
    vg_assert(sema->owner_lwpid != -1); /* must be initialised */
    vg_assert(sema->pipe[0] != sema->pipe[1]);
-   vg_assert(sema->owner_lwpid == VG_(gettid)()); /* must have it */
+   // vg_assert(sema->owner_lwpid == VG_(gettid)()); /* must have it */
 
    sema->owner_lwpid = 0;
 

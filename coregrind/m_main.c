@@ -1064,7 +1064,7 @@ void main_process_cmd_line_options( void )
 
 /* Number of file descriptors that Valgrind tries to reserve for
    its own use - just a small constant. */
-#define N_RESERVED_FDS (12)
+#define N_RESERVED_FDS (128)
 
 static void setup_file_descriptors(void)
 {
