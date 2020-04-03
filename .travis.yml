@@ -15,6 +15,7 @@ script: ./autogen.sh
       && cd microbenchmarks/durable_queue
       && make
       && time valgrind --fair-sched=yes --tool=pmat --verifier=durable_queue_verifier ./durable_queue 60
+      && time valgrind --tool=pmat --verifier=durable_queue_verifier ./durable_queue_ordered 60
       && make clean
       && cd ../linked_list
       && make
