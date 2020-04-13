@@ -384,9 +384,9 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				assert(tid != -1);
 				int_least64_t expected_tid = -1;
 				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
-					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 2)
+					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 3)
 					CLFLUSHOPT(&dq->head);
-					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 2)
+					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 3)
 					// NOP
 					#else
 					FLUSH(&dq->head);
