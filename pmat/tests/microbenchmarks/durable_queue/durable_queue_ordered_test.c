@@ -1,8 +1,3 @@
-/*
-    Test to determine whether or not we can catch errors where stores are
-    written-back out-of-order due to a lack of an explicit fence.
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +12,6 @@
 #endif
 #define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
 
-// Note: This performs randomized enqueue/dequeue operations in lock-step due to the stop-the-world approach
-// to memory reclamation we use.
 static void do_benchmark(struct DurableQueue *dq, int seconds) {
     time_t start;
     time_t end;
