@@ -302,8 +302,14 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 	}
 
 	// Set and flush value to be written.
-	node->value = value;
+	node->value = value;	
+	#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 0)
+	CLFLUSHOPT(&node->value); // Not a bug!
+	#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 0)
+	// NOP
+	#else
 	FLUSH(&node->value);
+	#endif
 
 	while (1) {
 		struct DurableQueueNode *last = (void *) atomic_load(&dq->tail);
@@ -317,9 +323,9 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 				node->seqNumber = last->seqNumber + 1;
 				FLUSH(&node->seqNumber);
 				if (atomic_compare_exchange_strong(&last->next, &next, (uintptr_t) node)) {
-					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 0)
+					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 1)
 					CLFLUSHOPT(&last->next);
-					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 0)
+					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 1)
 					// NOP
 					#else
 					FLUSH(&last->next);
@@ -330,9 +336,9 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 					return true;
 				}
 			} else {
-				#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 1)
+				#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 2)
 				CLFLUSHOPT(&last->next);
-				#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 1)
+				#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 2)
 				// NOP
 				#else
 				FLUSH(&last->next);
@@ -368,9 +374,9 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					hazard_release(next, false);
 					return DQ_EMPTY;
 				} else {
-					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 2)
+					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 3)
 					CLFLUSHOPT(&last->next);
-					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 2)
+					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 3)
 					// NOP
 					#else
 					FLUSH(&last->next);
@@ -384,9 +390,9 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 				assert(tid != -1);
 				int_least64_t expected_tid = -1;
 				if (atomic_compare_exchange_strong(&dq->head, &first, next)){
-					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 3)
+					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 4)
 					CLFLUSHOPT(&dq->head);
-					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 3)
+					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 4)
 					// NOP
 					#else
 					FLUSH(&dq->head);

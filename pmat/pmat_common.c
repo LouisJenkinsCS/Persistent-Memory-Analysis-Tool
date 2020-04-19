@@ -21,18 +21,19 @@
 #include "pub_tool_libcfile.h"
 #include "pmat_include.h"
 
+#define PMAT_RANDOM_POOL_SIZE 8192
+static UInt random_pool[PMAT_RANDOM_POOL_SIZE];
+static UInt random_pool_idx = PMAT_RANDOM_POOL_SIZE;
 
 UInt get_urandom(void) {
-    int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
-    if (fd < 0) {
-        VG_(emit)("Could not open /dev/urandom, defaulting to static seed...");
-        return 0;
+    if (random_pool_idx == PMAT_RANDOM_POOL_SIZE) {
+        int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+        tl_assert2(fd >= 0, "Could not open /dev/urandom");
+        VG_(read)(fd, &random_pool, sizeof(random_pool));
+        VG_(close)(fd);
+        random_pool_idx = 0;
     }
-
-    UInt ret;
-    VG_(read)(fd, &ret, sizeof(UInt));
-    VG_(close)(fd);
-    return ret;
+    return random_pool[random_pool_idx++];
 }
 
 
@@ -233,7 +234,7 @@ void *pmat_lru_cache_evict(struct pmat_lru_cache *cache) {
             break;
         }
         parent = node;
-        UInt x = VG_(random)(&cache->seed) % 100;
+        UInt x = get_urandom() % 100;
         UInt total = node->num_left + node->num_right;
         UInt probLeft = (node->num_left / ((Double) total)) * 100;
         if (x <= probLeft) {
@@ -323,7 +324,7 @@ void *pmat_rr_cache_evict(struct pmat_rr_cache *cache) {
     struct PMAT_VgHashTable *htable = cache->htable;
     struct pmat_htable_entry **entries = htable->chains;
     // Take a random index
-    UInt idx = VG_(random)(&cache->seed) % htable->n_chains;
+    UInt idx = get_urandom() % htable->n_chains;
     UInt loops = 0;
     while (htable->chains[idx] == NULL) {
         tl_assert2(loops != htable->n_chains, "Infinite Loop over VGHashTable Chains!");
@@ -335,7 +336,7 @@ void *pmat_rr_cache_evict(struct pmat_rr_cache *cache) {
         chainSize += 1;
     }
     tl_assert2(chainSize >= 1, "Somehow have a chainSize of %lu\n", chainSize);
-    UInt chainIdx = (chainSize > 1) ? (VG_(random)(&cache->seed) % chainSize) : 0;
+    UInt chainIdx = (chainSize > 1) ? (get_urandom() % chainSize) : 0;
     for (struct pmat_htable_entry *entry = htable->chains[idx]; entry != NULL; entry = entry->next) {
         if (chainIdx == 0) {
             // Found it...

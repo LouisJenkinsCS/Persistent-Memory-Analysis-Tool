@@ -7,8 +7,8 @@ for i in `seq 0 10`; do
         for sched in 'no' 'yes' 'random'; do                                                                                                                 
             for quantum in 1 10 100 1000 10000 100000; do                                                                                                    
                 for randomize in 'yes'; do                                                                                                                   
-                    cacheSize=$((1<<$i))                                                                                                                     
-                    wbSize=\$((1<<\$j))                                                                                                                      
+                    cacheSize=$((4**$i))                                                                                                                     
+                    wbSize=\$((4**\$j))                                                                                                                      
                     fname=\"cacheSize=\$cacheSize-wbSize=\$wbSize-sched=\$sched-quantum=\$quantum-randomize=\$randomize\"                                    
                     echo \"Launching \$fname\"                                                                                                               
                     cd /home/ljenkin4/Persistent-Memory-Analysis-Tool/pmat/tests/microbenchmarks/durable_queue                                               

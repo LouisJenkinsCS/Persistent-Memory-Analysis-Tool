@@ -1287,6 +1287,8 @@ void handle_noredir_jump ( /*OUT*/HWord* two_words,
  */
 VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 {
+   static UInt random_pool[1024];
+   static UInt random_pool_idx = 1024;
    /* Holds the remaining size of this thread's "timeslice". */
    Int dispatch_ctr = 0;
 
@@ -1425,9 +1427,16 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
 	 /* Figure out how many bbs to ask vg_run_innerloop to do. */
     if (VG_(randomize_quantum)) {
-       dispatch_ctr = (VG_(random)(&VG_(quantum_seed)) % VG_(scheduling_quantum)) + 1;
+      if (random_pool_idx == 1024) {
+         int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+         tl_assert2(fd >= 0, "Could not open /dev/urandom");
+         VG_(read)(fd, &random_pool, sizeof(random_pool));
+         VG_(close)(fd);
+         random_pool_idx = 0;
+      }
+      dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
     } else {
-         dispatch_ctr = VG_(scheduling_quantum);
+      dispatch_ctr = VG_(scheduling_quantum);
     }
 
 	 /* paranoia ... */

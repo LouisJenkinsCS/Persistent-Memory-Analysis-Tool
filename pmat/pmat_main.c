@@ -95,6 +95,10 @@ static struct pmem_ops {
     Double pmat_crash_prob;
     /** Lowest probability of crash occurring... defaults 0.5 * base probability */
     Double pmat_min_crash_prob;
+    /** RNG Pool filled by /dev/urandom, shared by all threads */
+    UInt pmat_rng_pool[8192];
+    /** RNG Pool filled */
+    UInt pmat_rng_pool_idx;
     /** Highest probability of crash occurring... defaults to 1.5 * base probability */
     /** Number of cache entries... Defaults to 1024 * 1024 (64MBs of Cache) */
     Word pmat_num_cache_entries;
@@ -200,7 +204,11 @@ static void **eviction_to_array(SizeT *sz) {
 }
 
 static UInt get_random(void) {
-    return VG_(random)(&pmem.pmat_rng_seed);
+    return get_urandom();
+}
+
+static Bool should_crash(void) {
+    return get_random() < pmem.pmat_crash_prob * UINT_MAX;
 }
 
 // Obtain number of processors
@@ -823,7 +831,7 @@ static void simulate_crash(void) {
 
 static void maybe_simulate_crash(void) {
     if (!pmem.pmat_should_verify || !pmem.pmat_verifier || VG_(OSetGen_Size)(pmem.pmat_registered_files) == 0) return;
-    if ((get_random() % 100) <= (pmem.pmat_crash_prob * 100)) {
+    if (should_crash()) {
         simulate_crash();
     }
 }
@@ -1343,7 +1351,7 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
         VG_(OSetGen_ResetIter)(pmem.pmat_writeback_buffer_entries);
         struct pmat_writeback_buffer_entry *tmp;
         while ( (tmp = VG_(OSetGen_Next)(pmem.pmat_writeback_buffer_entries)) ) {
-            if ((get_random() % 100) <= pmem.pmat_eviction_prob * 100) {
+            if (should_crash) {
                 VG_(addToXA)(arr, &tmp); 
             }
         }
@@ -1988,6 +1996,8 @@ pmat_post_clo_init(void)
         VG_(emit)("[ERROR] Bad eviction policy provided: '%s'; Require 'RR' or 'LRU' (not case sensitive)!\n", pmem.pmat_eviction_policy_str);
         VG_(exit)(1);
     }
+    // Fill RNG Pool
+
 }
 
 /**
