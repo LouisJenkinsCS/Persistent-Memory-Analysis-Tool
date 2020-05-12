@@ -3603,6 +3603,7 @@ ULong dis_Grp1 ( const VexAbiInfo* vbi,
                casLE( mkexpr(addr), mkexpr(dst0)/*expVal*/, 
                                     mkexpr(dst1)/*newVal*/,
                                     guest_RIP_curr_instr );
+               
             } else {
                storeLE(mkexpr(addr), mkexpr(dst1));
             }
@@ -19922,6 +19923,13 @@ Long dis_ESC_NONE (
    /* By default, F2 and F3 are not allowed, so let's start off with
       that setting. */
    Bool validF2orF3 = haveF2orF3(pfx) ? False : True;
+
+   // Split after lock-prefixed instruction to better model concurrency.
+   if (haveLOCK(pfx)) {
+      dres->whatNext = Dis_StopHere;
+      dres->jk_StopHere = Ijk_Boring;
+   }
+
    { UChar tmp_modrm = getUChar(delta);
      switch (opc) {
         case 0x00: /* ADD Gb,Eb */  case 0x01: /* ADD Gv,Ev */
@@ -19950,217 +19958,265 @@ Long dis_ESC_NONE (
    case 0x00: /* ADD Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Add8, WithFlagNone, True, 1, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x01: /* ADD Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Add8, WithFlagNone, True, sz, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x02: /* ADD Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Add8, WithFlagNone, True, 1, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x03: /* ADD Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Add8, WithFlagNone, True, sz, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x04: /* ADD Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, False, Iop_Add8, True, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x05: /* ADD Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A(sz, False, Iop_Add8, True, delta, "add" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x08: /* OR Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Or8, WithFlagNone, True, 1, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x09: /* OR Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Or8, WithFlagNone, True, sz, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x0A: /* OR Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Or8, WithFlagNone, True, 1, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x0B: /* OR Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Or8, WithFlagNone, True, sz, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x0C: /* OR Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, False, Iop_Or8, True, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x0D: /* OR Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, False, Iop_Or8, True, delta, "or" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x10: /* ADC Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Add8, WithFlagCarry, True, 1, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x11: /* ADC Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Add8, WithFlagCarry, True, sz, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x12: /* ADC Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Add8, WithFlagCarry, True, 1, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x13: /* ADC Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Add8, WithFlagCarry, True, sz, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x14: /* ADC Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, True, Iop_Add8, True, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x15: /* ADC Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, True, Iop_Add8, True, delta, "adc" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x18: /* SBB Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagCarry, True, 1, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x19: /* SBB Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagCarry, True, sz, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x1A: /* SBB Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagCarry, True, 1, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x1B: /* SBB Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagCarry, True, sz, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x1C: /* SBB Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, True, Iop_Sub8, True, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x1D: /* SBB Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, True, Iop_Sub8, True, delta, "sbb" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x20: /* AND Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_And8, WithFlagNone, True, 1, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x21: /* AND Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_And8, WithFlagNone, True, sz, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x22: /* AND Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_And8, WithFlagNone, True, 1, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x23: /* AND Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_And8, WithFlagNone, True, sz, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x24: /* AND Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, False, Iop_And8, True, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x25: /* AND Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, False, Iop_And8, True, delta, "and" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x28: /* SUB Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagNone, True, 1, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x29: /* SUB Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagNone, True, sz, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x2A: /* SUB Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagNone, True, 1, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x2B: /* SUB Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagNone, True, sz, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x2C: /* SUB Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A(1, False, Iop_Sub8, True, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x2D: /* SUB Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, False, Iop_Sub8, True, delta, "sub" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x30: /* XOR Gb,Eb */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Xor8, WithFlagNone, True, 1, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x31: /* XOR Gv,Ev */
       if (!validF2orF3) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Xor8, WithFlagNone, True, sz, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x32: /* XOR Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Xor8, WithFlagNone, True, 1, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x33: /* XOR Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Xor8, WithFlagNone, True, sz, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x34: /* XOR Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, False, Iop_Xor8, True, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x35: /* XOR Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, False, Iop_Xor8, True, delta, "xor" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x38: /* CMP Gb,Eb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagNone, False, 1, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x39: /* CMP Gv,Ev */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_G_E ( vbi, pfx, Iop_Sub8, WithFlagNone, False, sz, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x3A: /* CMP Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagNone, False, 1, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x3B: /* CMP Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op2_E_G ( vbi, pfx, Iop_Sub8, WithFlagNone, False, sz, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x3C: /* CMP Ib, AL */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( 1, False, Iop_Sub8, False, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    case 0x3D: /* CMP Iv, eAX */
       if (haveF2orF3(pfx)) goto decode_failure;
       delta = dis_op_imm_A( sz, False, Iop_Sub8, False, delta, "cmp" );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x50: /* PUSH eAX */
@@ -20368,6 +20424,7 @@ Long dis_ESC_NONE (
       d_sz  = 1;
       d64   = getSDisp8(delta + am_sz);
       delta = dis_Grp1 ( vbi, pfx, delta, modrm, am_sz, d_sz, sz, d64 );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x81: /* Grp1 Iv,Ev */
@@ -20383,6 +20440,7 @@ Long dis_ESC_NONE (
       d_sz  = imin(sz,4);
       d64   = getSDisp(d_sz, delta + am_sz);
       delta = dis_Grp1 ( vbi, pfx, delta, modrm, am_sz, d_sz, sz, d64 );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x83: /* Grp1 Ib,Ev */
@@ -20392,6 +20450,7 @@ Long dis_ESC_NONE (
       d_sz  = 1;
       d64   = getSDisp8(delta + am_sz);
       delta = dis_Grp1 ( vbi, pfx, delta, modrm, am_sz, d_sz, sz, d64 );
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x84: /* TEST Eb,Gb */
@@ -20448,7 +20507,9 @@ Long dis_ESC_NONE (
          delta += alen;
          DIP("xchg%c %s, %s\n", nameISize(sz), 
                                 nameIRegG(sz, pfx, modrm), dis_buf);
+         
       }
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
 
    case 0x88: { /* MOV Gb,Eb */
@@ -21478,6 +21539,7 @@ Long dis_ESC_NONE (
       /* We now let dis_Grp3 itself decide if F2 and/or F3 are valid */
       delta = dis_Grp3 ( vbi, pfx, 1, delta, &decode_OK );
       if (!decode_OK) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -21487,6 +21549,7 @@ Long dis_ESC_NONE (
       /* We now let dis_Grp3 itself decide if F2 and/or F3 are valid */
       delta = dis_Grp3 ( vbi, pfx, sz, delta, &decode_OK );
       if (!decode_OK) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -21508,6 +21571,7 @@ Long dis_ESC_NONE (
       /* We now let dis_Grp4 itself decide if F2 and/or F3 are valid */
       delta = dis_Grp4 ( vbi, pfx, delta, &decode_OK );
       if (!decode_OK) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -21517,6 +21581,7 @@ Long dis_ESC_NONE (
       /* We now let dis_Grp5 itself decide if F2 and/or F3 are valid */
       delta = dis_Grp5 ( vbi, pfx, sz, delta, dres, &decode_OK );
       if (!decode_OK) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -21639,6 +21704,10 @@ Long dis_ESC_0F (
    Long   delta = deltaIN;
    UChar  opc   = getUChar(delta);
    delta++;
+   if (haveLOCK(pfx)) {
+      dres->whatNext = Dis_StopHere;
+      dres->jk_StopHere = Ijk_Boring;
+   }
    switch (opc) { /* first switch */
 
    case 0x01:
@@ -22101,6 +22170,7 @@ Long dis_ESC_0F (
       if (sz != 8 && sz != 4 && sz != 2) goto decode_failure;
       delta = dis_bt_G_E ( vbi, pfx, sz, delta, BtOpNone, &ok );
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22128,6 +22198,7 @@ Long dis_ESC_0F (
       if (sz != 8 && sz != 4 && sz != 2) goto decode_failure;
       delta = dis_bt_G_E ( vbi, pfx, sz, delta, BtOpSet, &ok );
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22159,6 +22230,7 @@ Long dis_ESC_0F (
       /* We let dis_cmpxchg_G_E decide whether F2 or F3 are allowable. */
       delta = dis_cmpxchg_G_E ( &ok, vbi, pfx, 1, delta );
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22167,7 +22239,9 @@ Long dis_ESC_0F (
       /* We let dis_cmpxchg_G_E decide whether F2 or F3 are allowable. */
       if (sz != 2 && sz != 4 && sz != 8) goto decode_failure;
       delta = dis_cmpxchg_G_E ( &ok, vbi, pfx, sz, delta );
+      
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22177,6 +22251,7 @@ Long dis_ESC_0F (
       if (sz != 8 && sz != 4 && sz != 2) goto decode_failure;
       delta = dis_bt_G_E ( vbi, pfx, sz, delta, BtOpReset, &ok );
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22204,6 +22279,7 @@ Long dis_ESC_0F (
                              &decode_OK );
       if (!decode_OK)
          goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22213,6 +22289,7 @@ Long dis_ESC_0F (
       if (sz != 8 && sz != 4 && sz != 2) goto decode_failure;
       delta = dis_bt_G_E ( vbi, pfx, sz, delta, BtOpComp, &ok );
       if (!ok) goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22261,6 +22338,7 @@ Long dis_ESC_0F (
       delta = dis_xadd_G_E ( &decode_OK, vbi, pfx, 1, delta );
       if (!decode_OK)
          goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 
@@ -22269,6 +22347,7 @@ Long dis_ESC_0F (
       delta = dis_xadd_G_E ( &decode_OK, vbi, pfx, sz, delta );
       if (!decode_OK)
          goto decode_failure;
+      if (haveLOCK(pfx)) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       return delta;
    }
 

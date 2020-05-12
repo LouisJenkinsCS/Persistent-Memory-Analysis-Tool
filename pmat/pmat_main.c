@@ -156,6 +156,7 @@ extern UInt VG_(scheduling_quantum);
 
 /** Number of sblock run. */
 static ULong sblocks = 0;
+extern UChar VG_(clo_trace_flags);
 
 static void stringify_stack_trace(ExeContext *context, int fd);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
@@ -781,6 +782,7 @@ static void simulate_crash(void) {
             if (pmem.pmat_terminate_on_error) {
                 VG_(show_sched_status)(False, False, False);
                 pmat_fini(1);
+                VG_(emit)("Exiting on thread %d\n", VG_(get_running_tid)());
                 VG_(exit)(1);
             }
         } 
@@ -1536,7 +1538,11 @@ pmat_instrument(VgCallbackClosure *closure,
         const VexArchInfo *archinfo_host,
         IRType gWordTy, IRType hWordTy)
 {
-    Int i;
+    if (VG_(clo_trace_flags)) {
+        ppIRSB(bb);
+    }
+    Bool printed = False;
+    Int i; 
     IRSB *sbOut;
     IRTypeEnv *tyenv = bb->tyenv;
 
@@ -1632,6 +1638,8 @@ pmat_instrument(VgCallbackClosure *closure,
                 dataSize = sizeofIRType(dataTy);
                 /* has to be done before registering the guard */
                 addStmtToIRSB(sbOut, st);
+                // CAS has a LOCK prefix on it that acts as a memory fence
+                add_simple_event(sbOut, do_fence, "do_fence");
                 /* the guard statement on the CAS */
                 IROp opCasCmpEQ;
                 IROp opOr;
@@ -2099,6 +2107,8 @@ pmat_fini(Int exitcode)
             if (pmem.pmat_aggregate_dump_only) dump_aggregate_to_file();
         }
     }
+    VG_(emit)("Executed %lu superblocks...\n", sblocks);
+
 }
 
 /**

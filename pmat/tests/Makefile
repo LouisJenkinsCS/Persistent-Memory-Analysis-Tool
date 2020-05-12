@@ -11,6 +11,8 @@ tests: $(PROGS)
 
 install: 
 
+check:
+
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $<
 
