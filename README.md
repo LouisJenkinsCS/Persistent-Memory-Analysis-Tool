@@ -46,5 +46,11 @@ part of the documentation or type:
 	$ valgrind --tool=pmat --help
 ```
 
+To obtain output of the VEX IR generated for each superblock, use the following flags...
+
+```
+--vex-guest-chase-thresh=0 --trace-flags=10000000 --trace-notbelow=999999
+```
+
 For more information on the modifications made to Valgrind
 contact Louis Jenkins (LouisJenkinsCS@hotmail.com).

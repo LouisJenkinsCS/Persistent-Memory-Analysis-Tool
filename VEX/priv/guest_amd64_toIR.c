@@ -14184,6 +14184,9 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          /* Insert a memory fence.  It's sometimes important that these
             are carried through to the generated code. */
          stmt( IRStmt_MBE(Imbe_SFence) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
          DIP("sfence\n");
          goto decode_success;
       }
@@ -14209,6 +14212,9 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          /* Insert a memory fence.  It's sometimes important that these
             are carried through to the generated code. */
          stmt( IRStmt_MBE(Imbe_Fence) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
          DIP("fence\n");
          goto decode_success;
       }
@@ -14246,7 +14252,7 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          stmt( IRStmt_Put(OFFB_CMLEN, mkU64(lineszB) ) );
 
          jmp_lit(dres, Ijk_InvalICache, (Addr64)(guest_RIP_bbstart+delta));
-
+         dres->whatNext = Dis_StopHere;
          DIP("clflush%s %s\n", have66(pfx) ? "opt" : "", dis_buf);
          goto decode_success;
       }
@@ -14279,7 +14285,7 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
 
          /* not necessarily invalidates cache */
          jmp_lit(dres, Ijk_InvalICache, (Addr64)(guest_RIP_bbstart+delta));
-
+         dres->whatNext = Dis_StopHere;
          DIP("clwb %s\n", dis_buf);
          goto decode_success;
       }
@@ -21817,6 +21823,10 @@ Long dis_ESC_0F (
          /* RDTSCP is a serialising insn.  So, just in case someone is
             using it as a memory fence ... */
          stmt( IRStmt_MBE(Imbe_Fence) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         
          DIP("rdtscp\n");
          return delta;
       }
@@ -22160,6 +22170,9 @@ Long dis_ESC_0F (
       /* CPUID is a serialising insn.  So, just in case someone is
          using it as a memory fence ... */
       stmt( IRStmt_MBE(Imbe_Fence) );
+      dres->whatNext = Dis_StopHere;
+      dres->jk_StopHere = Ijk_Boring;
+      stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
       DIP("cpuid\n");
       return delta;
    }
