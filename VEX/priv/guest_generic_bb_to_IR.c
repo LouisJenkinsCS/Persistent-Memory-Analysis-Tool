@@ -290,6 +290,7 @@ IRSB* bb_to_IR (
    }
 
    /* Process instructions. */
+   Bool firstInstr = False;
    while (True) {
       vassert(n_instrs < guest_max_insns_really);
 
@@ -459,7 +460,7 @@ IRSB* bb_to_IR (
          case Dis_Continue:
             vassert(dres.continueAt == 0);
             vassert(dres.jk_StopHere == Ijk_INVALID);
-            if (n_instrs < guest_max_insns_really) {
+            if (n_instrs < guest_max_insns_really && guest_code[delta] != 0xF0) {
                /* keep going */
             } else {
                /* We have to stop.  See comment above re irsb field
