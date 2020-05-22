@@ -29,7 +29,8 @@ int main(int argc, char *argv[]) {
     // Initialize array sequentially...
 	for (int i = 0; i < N - 1; i++) {
 		*(int *) ((char *)(arr + i) + (sizeof(int) / 2)) = i + UINT16_MAX;
-		CLFLUSH(((char *)(arr + i) + (sizeof(int) / 2)));
+		CLFLUSH(&arr[i]);
+		CLFLUSH(&arr[i+1]);
         PMAT_FORCE_CRASH();
 	}
 
