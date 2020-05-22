@@ -11,6 +11,7 @@ script: ./autogen.sh
       && time valgrind --tool=pmat --verifier=in-order-store_verifier ./in-order-store
       && time valgrind --tool=pmat --verifier=in-order-store_verifier ./out-of-order-store
       && time valgrind --fair-sched=yes --tool=pmat --verifier=openmp_test_verifier ./openmp_test
+      && time valgrind --tool=pmat --verifier=split-store_verifier ./split-store
       && make clean
       && cd microbenchmarks/durable_queue
       && make
