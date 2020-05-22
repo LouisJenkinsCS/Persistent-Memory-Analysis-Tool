@@ -854,14 +854,24 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
     }
 
     if (TRIM_CACHELINE(addr) != TRIM_CACHELINE(addr + size - 1)) {
-        UWord pt1 = 64 - OFFSET_CACHELINE(addr);
-        UWord pt2 = (size * 8) - pt1;
+        UWord allBits = size * 8;
+        UWord remainingBits = (TRIM_CACHELINE(addr + size - 1) - addr) * 8;
+        UWord lower = value & ((1 << remainingBits) - 1);
+        UWord upper = (value >> (allBits - remainingBits)) << (allBits - remainingBits);
+        UWord newSize = size - remainingBits / 8;
         
-        //trace_pmem_store(addr, pt1, value & (1 << (sizeof(UWord) - pt1));
-        //trace_pmem_store(addr, size - (64 - OFFSET_CACHELINE(addr)));
-        VG_(emit)("pt1=%ld, pt2=%ld\n", pt1, pt2);
-        VG_(emit)("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%lld,%lld)\nMaybe split to %x and %x!\n", 
-            addr, addr + size, TRIM_CACHELINE(addr), TRIM_CACHELINE(addr + size), (1 << (pt1 * 8)) - 1, (1 << pt2) - 1);
+        tl_assert2(lower | upper << (allBits - remainingBits) == value, "%lu | %lu << %lu != %lu\n", lower, upper, allBits - remainingBits, value);
+        VG_(emit)("allBits=%lu, remainingBits=%lu, lower=%lu, upper=%lu, newSize=%lu, value=%lu, size=%lu\n",
+            allBits, remainingBits, lower, upper, newSize, value, size);
+        tl_assert2(newSize + (remainingBits / 8) == size, "Expected %lu but %lu + %lu == %lu\n", size, newSize, remainingBits / 8, newSize + (remainingBits / 8));
+
+        // Split stores across cache-lines
+        trace_pmem_store(addr, remainingBits / 8, lower);
+        trace_pmem_store(TRIM_CACHELINE(addr + size - 1), newSize, upper);
+        return;
+        // VG_(emit)("pt1=%ld, pt2=%ld\n", pt1, pt2);
+        // VG_(emit)("Warning: Split cache lines are not supported: %lu and %lu not in same cache line... (%lld,%lld)\nMaybe split to %x and %x!\n", 
+            // addr, addr + size, TRIM_CACHELINE(addr), TRIM_CACHELINE(addr + size), (1 << (pt1 * 8)) - 1, (1 << pt2) - 1);
     }    
     ULong startOffset = OFFSET_CACHELINE(addr);
     ULong endOffset = OFFSET_CACHELINE(addr + size);

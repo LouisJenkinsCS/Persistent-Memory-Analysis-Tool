@@ -9,6 +9,7 @@
 #include <valgrind/pmat.h>
 #include <assert.h>
 #include "utils.h"
+#include <stdint.h>
 
 int main(int argc, char *argv[]) {
 	assert(argc >= 3);
@@ -24,11 +25,12 @@ int main(int argc, char *argv[]) {
     int foundGap = 0;
     int foundCorruption = 0;
     int foundEnd = 0;
-    for (int i = 1; i < numElems - 1; i++) {
+    for (int i = 0; i < numElems - 1; i++) {
         if (*(int *) ((char *)(arr + i) + (sizeof(int) / 2)) == 0) {
             foundEnd = 1;
-        } else if (*(int *) ((char *)(arr + i) + (sizeof(int) / 2)) != i) {
+        } else if (*(int *) ((char *)(arr + i) + (sizeof(int) / 2)) != i + UINT16_MAX) {
             foundCorruption = 1;
+            fprintf(stderr, "Expected %d but received %d\n", i + UINT16_MAX, *(int *) ((char *)(arr + i) + (sizeof(int) / 2)));
         } else {
             if (foundEnd) {
                 foundGap = 1;
