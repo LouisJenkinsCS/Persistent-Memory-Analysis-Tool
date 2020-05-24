@@ -856,11 +856,11 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
     if (TRIM_CACHELINE(addr) != TRIM_CACHELINE(addr + size - 1)) {
         UWord allBits = size * 8;
         UWord remainingBits = (TRIM_CACHELINE(addr + size - 1) - addr) * 8;
-        UWord lower = value & ((1 << remainingBits) - 1);
-        UWord upper = (value >> (allBits - remainingBits));
+        UWord lower = value & ((1ULL << remainingBits) - 1ULL);
+        UWord upper = value >> remainingBits;
         UWord newSize = size - remainingBits / 8;
 
-        tl_assert2(lower | upper << (allBits - remainingBits) == value, "%lu | %lu << %lu != %lu\n", lower, upper, allBits - remainingBits, value);
+        tl_assert2(lower | upper << remainingBits == value, "%lu | %lu << %lu != %lu\n", lower, upper, remainingBits, value);
         // VG_(emit)("allBits=%lu, remainingBits=%lu, lower=%lu, upper=%lu, newSize=%lu, value=%lu, size=%lu\n",
         //     allBits, remainingBits, lower, upper, newSize, value, size);
         tl_assert2(newSize + (remainingBits / 8) == size, "Expected %lu but %lu + %lu == %lu\n", size, newSize, remainingBits / 8, newSize + (remainingBits / 8));
