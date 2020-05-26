@@ -17,8 +17,11 @@
  * N - Number of nodes (size of linked list is directly porportional to this value...)
  */
 int main(int argc, char *argv[]) {
+    #ifndef DO_PMEMCHECK
     assert(argc >= 3);
     assert(strcmp(argv[1], "1") == 0);
+    #else
+    #endif
 
     int sz;
     void *heap = OPEN_HEAP(argv[2], O_RDONLY, &sz);
