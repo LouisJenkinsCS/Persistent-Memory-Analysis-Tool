@@ -291,6 +291,7 @@ void LibVEX_Init (
    /* Really start up .. */
    vex_debuglevel         = debuglevel;
    vex_control            = *vcon;
+   vassert(vex_control.superblock_granularity >= 0 && vex_control.superblock_granularity <= 3);
    vex_initdone           = True;
    vexSetAllocMode ( VexAllocModeTEMP );
 }

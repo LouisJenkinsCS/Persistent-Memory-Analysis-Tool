@@ -233,6 +233,11 @@ static void usage_NORETURN ( Bool debug_help )
 "              attempt to avoid expensive address-space-resync operations\n"
 "    --max-threads=<number>    maximum number of threads that valgrind can\n"
 "                              handle [%d]\n"
+"    --superblock-granularity=0|1|2|3  Controls the granularity of superblocks.\n"
+"                    0 - (Default) Standard behavior for Valgrind.\n"
+"                    1 - Superblocks are split before and after a read-modify-write atomic.\n"
+"                    2 - Superblocks are split before and after a read-modify-write-atomic, flush, or fence.\n"
+"                    3 - Superblocks are split before and after a read-modify-write atomic, flush, fence, loads, and stores.\n"
 "\n";
 
    const HChar usage2[] = 
@@ -778,7 +783,7 @@ void main_process_cmd_line_options( void )
          xml_to = VgLogTo_Fd;
          VG_(clo_xml_fname_unexpanded) = NULL;
       }
-
+      else if VG_INT_CLO(arg, "--superblock-granularity", VG_(clo_vex_control).superblock_granularity) {}
       else if VG_STR_CLO(arg, "--log-file", VG_(clo_log_fname_unexpanded)) {
          log_to = VgLogTo_File;
       }

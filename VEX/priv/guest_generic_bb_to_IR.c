@@ -459,7 +459,19 @@ IRSB* bb_to_IR (
          case Dis_Continue:
             vassert(dres.continueAt == 0);
             vassert(dres.jk_StopHere == Ijk_INVALID);
-            if (n_instrs < guest_max_insns_really && guest_code[delta] != 0xF0 && (guest_code[delta] != 0x0F || guest_code[delta + 1] != 0xAE)) {
+            if (n_instrs < guest_max_insns_really) {
+               if (
+                     (vex_control.superblock_granularity > 0 && guest_code[delta] == 0xF0) || // LOCK-prefixed
+                     (vex_control.superblock_granularity > 1 && (guest_code[delta] == 0x0F && guest_code[delta + 1] == 0xAE)) // FLUSH or FENCE
+                     // TODO: Handle loads and stores
+                  ) {
+                  /* We have to stop.  See comment above re irsb field
+                  settings here. */
+                  irsb->next = IRExpr_Get(offB_GUEST_IP, guest_word_type);
+                  /* irsb->jumpkind must already by Ijk_Boring */
+                  irsb->offsIP = offB_GUEST_IP;
+                  goto done;
+               }
                /* keep going */
             } else {
                /* We have to stop.  See comment above re irsb field

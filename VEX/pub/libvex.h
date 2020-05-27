@@ -523,6 +523,10 @@ typedef
          - '3': current, faster implementation; perhaps producing slightly worse
                 spilling decisions. */
       UInt regalloc_version;
+      /*
+         Granularity of superblocks {0,1,2,3}
+      */
+     Int superblock_granularity;
    }
    VexControl;
 

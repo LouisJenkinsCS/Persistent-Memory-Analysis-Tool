@@ -59,7 +59,7 @@ Int vex_debuglevel = 0;
 Int vex_traceflags = 0;
 
 /* Max # guest insns per bb */
-VexControl vex_control = { 0,0,False,0,0,0 };
+VexControl vex_control = { 0,0,False,0,0,0,0 };
 
 
 
