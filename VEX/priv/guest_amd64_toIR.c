@@ -3278,7 +3278,8 @@ ULong dis_op2_G_E ( const VexAbiInfo* vbi,
                        PUT tmpb, %G
 */
 static
-ULong dis_mov_E_G ( const VexAbiInfo* vbi,
+ULong dis_mov_E_G ( DisResult *dres,
+                    const VexAbiInfo* vbi,
                     Prefix      pfx,
                     Int         size, 
                     Long        delta0 )
@@ -3302,6 +3303,11 @@ ULong dis_mov_E_G ( const VexAbiInfo* vbi,
       DIP("mov%c %s,%s\n", nameISize(size), 
                            dis_buf,
                            nameIRegG(size,pfx,rm));
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta0) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return delta0+len;
    }
 }
@@ -3325,7 +3331,7 @@ ULong dis_mov_E_G ( const VexAbiInfo* vbi,
                        ST tmpv, (tmpa) 
 */
 static
-ULong dis_mov_G_E ( const VexAbiInfo*  vbi,
+ULong dis_mov_G_E ( DisResult *dres, const VexAbiInfo*  vbi,
                     Prefix       pfx,
                     Int          size, 
                     Long         delta0,
@@ -3355,6 +3361,11 @@ ULong dis_mov_G_E ( const VexAbiInfo*  vbi,
       DIP("mov%c %s,%s\n", nameISize(size), 
                            nameIRegG(size,pfx,rm), 
                            dis_buf);
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta0) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return len+delta0;
    }
 }
@@ -3412,7 +3423,7 @@ ULong dis_op_imm_A ( Int    size,
 
 /* Sign- and Zero-extending moves. */
 static
-ULong dis_movx_E_G ( const VexAbiInfo* vbi,
+ULong dis_movx_E_G ( DisResult *dres, const VexAbiInfo* vbi,
                      Prefix pfx,
                      Long delta, Int szs, Int szd, Bool sign_extend )
 {
@@ -3444,6 +3455,12 @@ ULong dis_movx_E_G ( const VexAbiInfo* vbi,
                                nameISize(szd),
                                dis_buf, 
                                nameIRegG(szd,pfx,rm));
+      
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return len+delta;
    }
 }
@@ -8599,7 +8616,7 @@ ULong dis_cmpxchg_G_E ( /*OUT*/Bool* ok,
                        PUT tmpd, %G
 */
 static
-ULong dis_cmov_E_G ( const VexAbiInfo* vbi,
+ULong dis_cmov_E_G ( DisResult *dres, const VexAbiInfo* vbi,
                      Prefix        pfx,
                      Int           sz, 
                      AMD64Condcode cond,
@@ -8643,6 +8660,12 @@ ULong dis_cmov_E_G ( const VexAbiInfo* vbi,
       DIP("cmov%s %s,%s\n", name_AMD64Condcode(cond),
                             dis_buf,
                             nameIRegG(sz,pfx,rm));
+
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta0) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return len+delta0;
    }
 }
@@ -8799,7 +8822,8 @@ ULong dis_xadd_G_E ( /*OUT*/Bool* decode_ok,
                        ST $0, (tmpa)
 */
 static
-ULong dis_mov_S_E ( const VexAbiInfo* vbi,
+ULong dis_mov_S_E ( DisResult *dres,
+                    const VexAbiInfo* vbi,
                     Prefix      pfx,
                     Int         size,
                     Long        delta0 )
@@ -8821,6 +8845,11 @@ ULong dis_mov_S_E ( const VexAbiInfo* vbi,
       storeLE(mkexpr(addr), mkU16(0));
       DIP("mov %s,%s\n", nameSReg(gregOfRexRM(pfx, rm)),
                          dis_buf);
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta0) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return len+delta0;
    }
 }
@@ -14184,9 +14213,11 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          /* Insert a memory fence.  It's sometimes important that these
             are carried through to the generated code. */
          stmt( IRStmt_MBE(Imbe_SFence) );
-         dres->whatNext = Dis_StopHere;
-         dres->jk_StopHere = Ijk_Boring;
-         if (vex_control.superblock_granularity > 1) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         if (vex_control.superblock_granularity > 1) {
+            dres->whatNext = Dis_StopHere;
+            dres->jk_StopHere = Ijk_Boring;
+            stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         }
          DIP("sfence\n");
          goto decode_success;
       }
@@ -14212,9 +14243,11 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          /* Insert a memory fence.  It's sometimes important that these
             are carried through to the generated code. */
          stmt( IRStmt_MBE(Imbe_Fence) );
-         dres->whatNext = Dis_StopHere;
-         dres->jk_StopHere = Ijk_Boring;
-         if (vex_control.superblock_granularity > 1) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         if (vex_control.superblock_granularity > 1) {
+            dres->whatNext = Dis_StopHere;
+            dres->jk_StopHere = Ijk_Boring;
+            stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         }
          DIP("fence\n");
          goto decode_success;
       }
@@ -20521,7 +20554,7 @@ Long dis_ESC_NONE (
    case 0x88: { /* MOV Gb,Eb */
       /* We let dis_mov_G_E decide whether F3(XRELEASE) is allowable. */
       Bool ok = True;
-      delta = dis_mov_G_E(vbi, pfx, 1, delta, &ok);
+      delta = dis_mov_G_E(dres, vbi, pfx, 1, delta, &ok);
       if (!ok) goto decode_failure;
       return delta;
    }
@@ -20529,24 +20562,24 @@ Long dis_ESC_NONE (
    case 0x89: { /* MOV Gv,Ev */
       /* We let dis_mov_G_E decide whether F3(XRELEASE) is allowable. */
       Bool ok = True;
-      delta = dis_mov_G_E(vbi, pfx, sz, delta, &ok);
+      delta = dis_mov_G_E(dres, vbi, pfx, sz, delta, &ok);
       if (!ok) goto decode_failure;
       return delta;
    }
 
    case 0x8A: /* MOV Eb,Gb */
       if (haveF2orF3(pfx)) goto decode_failure;
-      delta = dis_mov_E_G(vbi, pfx, 1, delta);
+      delta = dis_mov_E_G(dres, vbi, pfx, 1, delta);
       return delta;
 
    case 0x8B: /* MOV Ev,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
-      delta = dis_mov_E_G(vbi, pfx, sz, delta);
+      delta = dis_mov_E_G(dres, vbi, pfx, sz, delta);
       return delta;
 
    case 0x8C: /* MOV S,E -- MOV from a SEGMENT REGISTER */
       if (haveF2orF3(pfx)) goto decode_failure;
-      delta = dis_mov_S_E(vbi, pfx, sz, delta);
+      delta = dis_mov_S_E(dres, vbi, pfx, sz, delta);
       return delta;
 
    case 0x8D: /* LEA M,Gv */
@@ -20571,6 +20604,11 @@ Long dis_ESC_NONE (
               );
       DIP("lea%c %s, %s\n", nameISize(sz), dis_buf, 
                             nameIRegG(sz,pfx,modrm));
+      if (vex_control.superblock_granularity >= 3) {
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+      }
       return delta;
 
    case 0x8F: { /* POPQ m64 / POPW m16 */
@@ -21823,10 +21861,11 @@ Long dis_ESC_0F (
          /* RDTSCP is a serialising insn.  So, just in case someone is
             using it as a memory fence ... */
          stmt( IRStmt_MBE(Imbe_Fence) );
-         dres->whatNext = Dis_StopHere;
-         dres->jk_StopHere = Ijk_Boring;
-         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
-         
+         if (vex_control.superblock_granularity > 1) {
+            dres->whatNext = Dis_StopHere;
+            dres->jk_StopHere = Ijk_Boring;
+            stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+         }
          DIP("rdtscp\n");
          return delta;
       }
@@ -21923,7 +21962,7 @@ Long dis_ESC_0F (
    case 0x4E: /* CMOVLEb/CMOVNGb (cmov less or equal) */
    case 0x4F: /* CMOVGb/CMOVNLEb (cmov greater) */
       if (haveF2orF3(pfx)) goto decode_failure;
-      delta = dis_cmov_E_G(vbi, pfx, sz, (AMD64Condcode)(opc - 0x40), delta);
+      delta = dis_cmov_E_G(dres, vbi, pfx, sz, (AMD64Condcode)(opc - 0x40), delta);
       return delta;
 
    case 0x80:
@@ -22170,9 +22209,11 @@ Long dis_ESC_0F (
       /* CPUID is a serialising insn.  So, just in case someone is
          using it as a memory fence ... */
       stmt( IRStmt_MBE(Imbe_Fence) );
-      dres->whatNext = Dis_StopHere;
-      dres->jk_StopHere = Ijk_Boring;
-      stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+      if (vex_control.superblock_granularity > 1) {
+         dres->whatNext = Dis_StopHere;
+         dres->jk_StopHere = Ijk_Boring;
+         stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+      }
       DIP("cpuid\n");
       return delta;
    }
@@ -22272,14 +22313,14 @@ Long dis_ESC_0F (
       if (haveF2orF3(pfx)) goto decode_failure;
       if (sz != 2 && sz != 4 && sz != 8)
          goto decode_failure;
-      delta = dis_movx_E_G ( vbi, pfx, delta, 1, sz, False );
+      delta = dis_movx_E_G (dres, vbi, pfx, delta, 1, sz, False );
       return delta;
 
    case 0xB7: /* MOVZXw Ew,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       if (sz != 4 && sz != 8)
          goto decode_failure;
-      delta = dis_movx_E_G ( vbi, pfx, delta, 2, sz, False );
+      delta = dis_movx_E_G (dres, vbi, pfx, delta, 2, sz, False );
       return delta;
 
    case 0xBA: { /* Grp8 Ib,Ev */
@@ -22336,14 +22377,14 @@ Long dis_ESC_0F (
       if (haveF2orF3(pfx)) goto decode_failure;
       if (sz != 2 && sz != 4 && sz != 8)
          goto decode_failure;
-      delta = dis_movx_E_G ( vbi, pfx, delta, 1, sz, True );
+      delta = dis_movx_E_G (dres, vbi, pfx, delta, 1, sz, True );
       return delta;
 
    case 0xBF: /* MOVSXw Ew,Gv */
       if (haveF2orF3(pfx)) goto decode_failure;
       if (sz != 4 && sz != 8)
          goto decode_failure;
-      delta = dis_movx_E_G ( vbi, pfx, delta, 2, sz, True );
+      delta = dis_movx_E_G (dres, vbi, pfx, delta, 2, sz, True );
       return delta;
 
    case 0xC0: { /* XADD Gb,Eb */ 
