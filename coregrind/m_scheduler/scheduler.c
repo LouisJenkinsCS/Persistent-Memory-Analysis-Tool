@@ -438,6 +438,11 @@ void VG_(release_BigLock_LL) ( const HChar* who )
    ML_(release_sched_lock)(the_BigLock);
 }
 
+void VG_(exit_BigLock_LL)( const HChar* who )
+{
+   ML_(exit_sched_lock)(the_BigLock);
+}
+
 Bool VG_(owns_BigLock_LL) ( ThreadId tid )
 {
    return (ML_(get_sched_lock_owner)(the_BigLock)
@@ -463,7 +468,7 @@ void VG_(exit_thread)(ThreadId tid)
    if (VG_(clo_trace_sched))
       print_sched_event(tid, "release lock in VG_(exit_thread)");
 
-   VG_(release_BigLock_LL)(NULL);
+   VG_(exit_BigLock_LL)(NULL);
 }
 
 /* If 'tid' is blocked in a syscall, send it SIGVGKILL so as to get it

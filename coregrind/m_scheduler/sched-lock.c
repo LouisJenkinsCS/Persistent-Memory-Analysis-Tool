@@ -95,3 +95,8 @@ void ML_(release_sched_lock)(struct sched_lock *p)
 {
    return (sched_lock_ops->release_sched_lock)(p);
 }
+
+void ML_(exit_sched_lock)(struct sched_lock *p) 
+{
+   return (sched_lock_ops->exit_sched_lock)(p);
+}

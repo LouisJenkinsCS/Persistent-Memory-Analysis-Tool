@@ -103,9 +103,16 @@ struct sched_lock {
    volatile SizeT used_thread_locks;
    volatile struct semaphore_wrapper **thread_locks;
    volatile ThreadId owner;
+   volatile ThreadId holdout_thread;
+   volatile UInt num_holdout;
 };
 
+#define RANDOM_LOCK_CEIL(x) ((double) ((int) (x) == (double) (x) ? ((int) (x)) : ((int) (x) + 1)))
+
 extern UInt VG_(quantum_seed);
+extern UInt VG_(scheduling_quantum);
+extern ThreadId VG_(running_tid);
+static UInt maximum_holdout;
 
 static void acquire(struct sched_lock *lock) {
    if (__sync_lock_test_and_set(&lock->sched_lock, 1) == 0) {
@@ -132,19 +139,22 @@ static const HChar *get_sched_lock_name(void)
 
 static struct sched_lock *create_sched_lock(void)
 {
+   maximum_holdout = RANDOM_LOCK_CEIL(100000.0 / VG_(scheduling_quantum));
    struct sched_lock *p;
 
    p = VG_(malloc)("sched_lock", sizeof(*p));
 
    ML_(sema_init)(&p->sched_lock);
    p->owner = VG_INVALID_THREADID;
+   p->holdout_thread = VG_INVALID_THREADID;
+   p->num_holdout = VG_(random)(&VG_(quantum_seed)) % maximum_holdout + 1;
    p->thread_locks = NULL;
    p->num_thread_locks = 0;
    p->used_thread_locks = 0;
    p->sched_lock = 0;
 
    INNER_REQUEST(ANNOTATE_RWLOCK_CREATE(p));
-   VG_(emit)("Hard Limit is %d\n", VG_(fd_hard_limit));
+   // VG_(emit)("Hard Limit is %d\n", VG_(fd_hard_limit));
    return p;
 }
 
@@ -164,13 +174,51 @@ static int get_sched_lock_owner(struct sched_lock *p) {
    return p->owner;
 }
 
+// Must hold lock!!!
+static void set_holdout_thread(struct sched_lock *p) {
+   tl_assert2(p->holdout_thread == VG_INVALID_THREADID, "Attempted to set holdout thread when thread %lu has %lu scheduling decisions left...", p->holdout_thread, p->num_holdout);
+   
+   // Only randomly sample a holdout thread if there are other threads waiting
+   if (p->used_thread_locks) {
+      UInt ix = VG_(random)(&VG_(quantum_seed)) % p->used_thread_locks + 1;
+      if (ix == p->used_thread_locks) {
+         p->holdout_thread = VG_(get_running_tid)();
+         tl_assert2(p->holdout_thread != VG_INVALID_THREADID, "VG_(running_tid)() == VG_INVALID_THREADID!!!");
+      } else {
+         UInt iterations = ix;
+         for (int i = 0; i < p->num_thread_locks; i++) {
+            if (iterations == 0 && p->thread_locks[i] && p->thread_locks[i]->tid != VG_INVALID_THREADID) {
+               p->holdout_thread = p->thread_locks[i]->tid;
+               break;
+            }
+            if (p->thread_locks[i] && p->thread_locks[i]->tid != VG_INVALID_THREADID) {
+               iterations--;
+            }
+         }
+      }
+      p->num_holdout = VG_(random)(&VG_(quantum_seed)) % maximum_holdout + 1;
+   }
+}
+
 static void release_sched_lock(struct sched_lock *p) {
    acquire(p);
+   
+   if (p->holdout_thread) {
+      p->num_holdout--;
+      tl_assert(p->num_holdout >= 0);
+      if (p->num_holdout == 0) {
+         p->holdout_thread = VG_INVALID_THREADID;
+      }
+   }
+   // Pick a holdout thread if other threads are waiting...
+   if (p->holdout_thread == VG_INVALID_THREADID && VG_(get_running_tid)() != VG_INVALID_THREADID) {
+      set_holdout_thread(p);
+   }
    // Check if anyone needs access
-   if (p->used_thread_locks) {
+   if (p->used_thread_locks - (p->holdout_thread == VG_(get_running_tid)() ? 0 : 1)) {
       Int iterations = VG_(random)(&VG_(quantum_seed)) % p->used_thread_locks;
       for (int i = 0; i < p->num_thread_locks; i++) {
-         if (iterations == 0 && p->thread_locks[i] && p->thread_locks[i]->tid != VG_INVALID_THREADID) {
+         if (iterations == 0 && p->thread_locks[i] && p->thread_locks[i]->tid != VG_INVALID_THREADID && p->thread_locks[i]->tid != p->holdout_thread) {
             p->owner = p->thread_locks[i]->tid;
             semaphore_signal(&p->thread_locks[i]->sema);
             break;
@@ -242,6 +290,15 @@ static void acquire_sched_lock(struct sched_lock *p) {
    }
 }
 
+static void exit_sched_lock(struct sched_lock *p) {
+   acquire(p);
+   if (VG_(count_living_threads)() == 2) {
+      p->holdout_thread = VG_INVALID_THREADID;
+   }
+   release(p);
+   release_sched_lock(p);
+}
+
 const struct sched_lock_ops ML_(random_lock_ops) = {
    .get_sched_lock_name  = get_sched_lock_name,
    .create_sched_lock    = create_sched_lock,
@@ -249,4 +306,5 @@ const struct sched_lock_ops ML_(random_lock_ops) = {
    .get_sched_lock_owner = get_sched_lock_owner,
    .acquire_sched_lock   = acquire_sched_lock,
    .release_sched_lock   = release_sched_lock,
+   .exit_sched_lock      = exit_sched_lock,
 };

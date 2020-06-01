@@ -190,4 +190,5 @@ const struct sched_lock_ops ML_(linux_ticket_lock_ops) = {
    .get_sched_lock_owner = get_sched_lock_owner,
    .acquire_sched_lock   = acquire_sched_lock,
    .release_sched_lock   = release_sched_lock,
+   .exit_sched_lock      = release_sched_lock,
 };

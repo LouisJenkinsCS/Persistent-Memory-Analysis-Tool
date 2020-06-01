@@ -41,6 +41,9 @@ struct sched_lock_ops {
    int (*get_sched_lock_owner)(struct sched_lock *p);
    void (*acquire_sched_lock)(struct sched_lock *p);
    void (*release_sched_lock)(struct sched_lock *p);
+   // NEW: Called when a thread exits and is a way to notify
+   // the scheduler. Used in the randomized lock.
+   void (*exit_sched_lock)(struct sched_lock *p); 
 };
 
 extern const struct sched_lock_ops ML_(generic_sched_lock_ops);
