@@ -907,6 +907,11 @@ static VG_REGPARM(3) void trace_pmem_store(Addr addr, SizeT size, UWord value)
             do_writeback(new_entry, False);
         }
     }
+
+    if (get_random() % 100 == 0 && eviction_size()) {
+        struct pmat_cache_entry *entry = eviction_evict();
+        do_writeback(entry, False);
+    }
 }
 
 // Unused...
@@ -1346,6 +1351,12 @@ static void do_writeback(struct pmat_cache_entry *entry, Bool explicit) {
        write_to_file(exist);
        VG_(free)(exist->entry);
        VG_(OSetGen_FreeNode)(pmem.pmat_writeback_buffer_entries, exist);
+    }
+
+    if (!explicit) {
+        write_to_file(&wblookup);
+        VG_(free)(entry);
+        return;
     }
 
     // Store Buffer
