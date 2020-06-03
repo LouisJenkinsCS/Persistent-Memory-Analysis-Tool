@@ -26,6 +26,20 @@
         ret; \
     })
 
+char *stringify_node(struct DurableQueueNode *node) {
+    char *buf = malloc(1024);
+    snprintf(buf, 1024, "Node @ 0x%lX {\n"
+    "\tvalue: %d\n"
+    "\tdeqThreadId (Unused): %ld\n"
+    "\tnext: 0x%lX\n"
+    "\tseqNumber: %d\n"
+    "\tfree_list_next: 0x%lX\n"
+    "\talloc_list_next: 0x%lX\n"
+    "}"
+    , (uintptr_t) node, node->value, node->deqThreadID, node->next, node->seqNumber, node->free_list_next, node->alloc_list_next);
+    return buf;
+}
+
 void dump_on_failure(void *heap, size_t sz) {
     struct DurableQueue *dq = heap;
     void *base = dq->heap_base;
@@ -46,17 +60,19 @@ void dump_on_failure(void *heap, size_t sz) {
                 printf("\n\tmetadata[%d]: %ld%s", i, dq->metadata[i], dq->metadata[i] != 0 ? "(CORRUPTED)" : "");
         }
     }
-    printf("\n}");
+    printf("\n}\n");
 
     // Check the head  and tail of the queue
-    struct DurableQueueNode *node = VERIFY_PTR(heap, base, sz, dq->head);
+    struct DurableQueueNode *head = VERIFY_PTR(heap, base, sz, dq->head);
+    struct DurableQueueNode *tail = VERIFY_PTR(heap, base, sz, dq->tail);
+    printf("head: %s\n", head ? stringify_node(head) : "(CORRUPTED)");
+    printf("tail: %s\n", tail ? stringify_node(tail): "(CORRUPTED)");
 }
 
 int main(int argc, char *argv[]) {
-	assert(argc >= 3);
-    assert(strcmp(argv[1], "1") == 0);
+	assert(argc >= 2);
 
-    int fd = open(argv[2], O_RDONLY);
+    int fd = open(argv[1], O_RDONLY);
     assert(fd != -1);
     struct stat sb;
     int retval = fstat(fd, &sb);
