@@ -13,11 +13,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#ifndef N
-#define N (1024 * 1024)
-#endif
-#define SIZE (sizeof(struct DurableQueue) + (N+1) * sizeof(struct DurableQueueNode))
-
 int main(int argc, char *argv[]) {
 	assert(argc >= 3);
     assert(strcmp(argv[1], "1") == 0);
@@ -31,7 +26,7 @@ int main(int argc, char *argv[]) {
     void *heap = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     assert(heap != (void *) -1);
     //assert(SIZE == sz);
-    retval = DurableQueue_verify(heap, SIZE);
+    retval = DurableQueue_verify(heap, sz);
     munmap(heap, sz);
 
     if (retval == false) {

@@ -17,7 +17,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
     time_t end;
 	time(&start);
     while (1) {
-        for (int i = 0; i < N / 2; i++) {
+        for (int i = 0; i < N; i++) {
             DurableQueue_enqueue(dq,i);
             time(&end);
             int time_taken = end - start;
@@ -27,7 +27,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
             }
             
         }
-        for (int i = 0; i < N / 2; i++) {
+        for (int i = 0; i < N; i++) {
             assert(DurableQueue_dequeue(dq, 0) == i);
             time(&end);
             int time_taken = end - start;
