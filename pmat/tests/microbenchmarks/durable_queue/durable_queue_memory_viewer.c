@@ -105,7 +105,7 @@ void dump(void *heap, size_t sz) {
         if (fnode) {
             int i = 0;
             while (fnode != NULL) {
-                if (i++ % 5 == 0) {
+                if (i++ % 4 == 0) {
                     printf("\n\t");
                 }
                 printf("Node @ 0x%lX", (uintptr_t) fnode);
@@ -114,7 +114,7 @@ void dump(void *heap, size_t sz) {
                 }
                 fnode = VERIFY_PTR(new_base, old_base, sz, fnode->free_list_next);
             }
-            printf("]\n");
+            printf("\n]\n");
         } else {
             printf("]\n");
         }
@@ -126,7 +126,7 @@ void dump(void *heap, size_t sz) {
         if (anode) {
             int i = 0;
             while (anode != NULL) {
-                if (i++ % 5 == 0) {
+                if (i++ % 4 == 0) {
                     printf("\n\t");
                 }
                 printf("Node @ 0x%lX", (uintptr_t) anode);
@@ -135,7 +135,7 @@ void dump(void *heap, size_t sz) {
                 }
                 anode = VERIFY_PTR(new_base, old_base, sz, anode->alloc_list_next);
             }
-            printf("]\n");
+            printf("\n]\n");
         } else {
             printf("]\n");
         }
@@ -165,8 +165,10 @@ int main(int argc, char *argv[]) {
     struct DurableQueue *dq = DurableQueue_recovery(heap, sz);
     if (dq == NULL) {
         printf("Recovery failed...\n");
-        dump(heap, sz);
+    } else {
+        printf("Recovery succeeded...\n");
     }
+    dump(heap, sz);
     munmap(heap, sz);
     return 0;
 }
