@@ -159,7 +159,7 @@ bool DurableQueue_verify(void *heap, size_t sz) {
 	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
 		if (node->next) node->next += off;
 		if (node == dq->tail) foundTail = true;
-		if (node->value == -1 && node != dq->tail) {
+		if (node->value == -1 && node != dq->head) {
 			fprintf(stderr, "Reachable node has a value of -1!\n");
 			return false;
 		}
@@ -260,7 +260,7 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
 	}
 	long actualNodesFound = 0;
 	for (struct DurableQueueNode *node = dq->head; node != NULL; node = node->next) {
-		if (node->value == -1 && node != dq->tail) {
+		if (node->value == -1 && node != dq->head) {
 			fprintf(stderr, "Reachable node has a value of -1!\n");
 			return NULL;
 		}
@@ -294,6 +294,7 @@ static void post_dequeue(struct DurableQueue *dq) {
 }
 
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
+	assert(value != -1);
 	// Allocate node...
 	struct DurableQueueNode *node = DurableQueue_alloc(dq);
 	// Full... May need to dequeue for a bit...

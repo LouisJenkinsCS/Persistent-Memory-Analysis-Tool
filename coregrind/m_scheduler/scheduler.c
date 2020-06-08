@@ -110,6 +110,10 @@ Bool VG_(in_generated_code) = False;
 Bool VG_(randomize_quantum) = False;
 /* Randomized Seed for quantum. */
 UInt VG_(quantum_seed) = 0;
+/* If we are inside of code of interest as specified via a hint. */
+Bool VG_(code_of_interest) = False;
+/* If we handle code of interest hints.*/
+Bool VG_(handle_code_of_interest) = False; 
 
 /* Defines the thread-scheduling timeslice, in terms of the number of
    basic blocks we attempt to run each thread for.  Smaller values
@@ -1576,6 +1580,21 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
       case VG_TRC_INNER_COUNTERZERO:
 	 /* Timeslice is out.  Let a new thread be scheduled. */
 	 vg_assert(dispatch_ctr == 0);
+      if (random_pool_idx == 1024) {
+         int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+         tl_assert2(fd >= 0, "Could not open /dev/urandom");
+         VG_(read)(fd, &random_pool, sizeof(random_pool));
+         VG_(close)(fd);
+         random_pool_idx = 0;
+      }
+    // Check if we are in code of interest
+    if (VG_(handle_code_of_interest) && !VG_(code_of_interest) && random_pool[random_pool_idx++] % 2 == 0) {
+      if (VG_(randomize_quantum)) {
+         dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
+      } else {
+         dispatch_ctr = VG_(scheduling_quantum);
+      }
+    }
 	 break;
 
       case VG_TRC_FAULT_SIGNAL:

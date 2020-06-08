@@ -158,6 +158,9 @@ extern UInt VG_(scheduling_quantum);
 static ULong sblocks = 0;
 extern UChar VG_(clo_trace_flags);
 
+extern Bool VG_(code_of_interest);
+extern Bool VG_(handle_code_of_interest); 
+
 static void stringify_stack_trace(ExeContext *context, int fd);
 static Int cmp_exe_context_pointers(const ExeContext **lhs, const ExeContext **rhs);
 static void maybe_simulate_crash(void);
@@ -1962,6 +1965,7 @@ pmat_process_cmd_line_option(const HChar *arg)
     else if VG_STR_CLO(arg, "--eviction-policy", pmem.pmat_eviction_policy_str) {}
     else if VG_INT_CLO(arg, "--scheduling-quantum", VG_(scheduling_quantum)) {}
     else if VG_BOOL_CLO(arg, "--randomize-quantum", VG_(randomize_quantum)) {}
+    else if VG_BOOL_CLO(arg, "--handle-code-of-interest", VG_(handle_code_of_interest)) {}
     else return False;
 
     return True;
@@ -2060,6 +2064,8 @@ pmat_print_usage(void)
             "                                      default [yes]\n"
             "    --scheduling-quantum=N            Number of blocks each thread will attempt to process per time quantum.\n"
             "                                      default [1000]\n"
+            "    --handle-code-of-interest=yes|no  Handle scheduling hints for code-of-interest.\n"
+            "                                      default [no]\n"
     );
 }
 
