@@ -156,9 +156,10 @@ extern UInt VG_(scheduling_quantum);
 
 /** Number of sblock run. */
 static ULong sblocks = 0;
+static ULong threadSBlocks[1024] = {0};
 extern UChar VG_(clo_trace_flags);
 
-extern Bool VG_(code_of_interest);
+extern Bool VG_(code_of_interest)[1024];
 extern Bool VG_(handle_code_of_interest); 
 
 static void stringify_stack_trace(ExeContext *context, int fd);
@@ -933,7 +934,9 @@ static VG_REGPARM(3) void trace_pmem_store_dword(Addr addr, UWord value1, UWord 
 static void
 add_one_SB_entered(void)
 {
+    tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
     ++sblocks;
+    ++threadSBlocks[VG_(get_running_tid)()];
 }
 
 /**
@@ -1763,6 +1766,10 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
             && VG_USERREQ__PMC_PMAT_TRANSIENT != arg[0]
             && VG_USERREQ__PMC_PMAT_IS_PERSIST != arg[0]
             && VG_USERREQ__PMC_PMAT_PERSIST_ORDER != arg[0]
+            && VG_USERREQ__PMC_PMAT_SCHEDULER_START != arg[0]
+            && VG_USERREQ__PMC_PMAT_SCHEDULER_STOP != arg[0]
+            && VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED != arg[0]
+            && VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED_TOTAL != arg[0]
             && VG_USERREQ__PMC_RESERVED1 != arg[0]
             && VG_USERREQ__PMC_RESERVED2 != arg[0]
             && VG_USERREQ__PMC_RESERVED3 != arg[0]
@@ -1775,8 +1782,28 @@ pmat_handle_client_request(ThreadId tid, UWord *arg, UWord *ret )
         return False;
 
     switch (arg[0]) {
+        case VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED: {
+            tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
+            *ret = threadSBlocks[VG_(get_running_tid)()];
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED_TOTAL: {
+            *ret = sblocks;
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_SCHEDULER_START: {
+            tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
+            VG_(code_of_interest)[VG_(get_running_tid)()] = True;
+            break;
+        }
+        case VG_USERREQ__PMC_PMAT_SCHEDULER_STOP: {
+            tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
+            VG_(code_of_interest)[VG_(get_running_tid)()] = False;       
+            break;
+        }
         case VG_USERREQ__PMC_PMAT_PERSIST_ORDER: {
             // TODO: Fill out and create some data structure to hold everything.
+            break;
         }
         // Check both simulated CPU Cache and whether or not write-back reordering buffer contains cache-line(s) for [addr, addr + sz)
         // TODO: Handle cases where we cross multiple cache-lines

@@ -65,8 +65,11 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 	atomic_int status = 1; 
 	size_t numOperations = 0;
 
+	size_t totalSuperblocks = PMAT_SUPERBLOCKS_EXECUTED_TOTAL;
+
 	#pragma omp parallel reduction(+: numOperations)
 	{
+		size_t threadSuperblocks = PMAT_SUPERBLOCKS_EXECUTED;
 		#pragma omp master
 		printf("Number of threads: %d\n", omp_get_num_threads());
 		time_t end;
@@ -99,9 +102,10 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 				}
 			}
 		}
-		printf("Thread %d performed %lu operations\n", omp_get_thread_num(), numOperations);
+		printf("Thread %d performed %lu operations with a total of %lu superblocks (%0.2f superblocks per operation)\n", 
+			omp_get_thread_num(), numOperations, PMAT_SUPERBLOCKS_EXECUTED - threadSuperblocks, (double)(PMAT_SUPERBLOCKS_EXECUTED - threadSuperblocks) / numOperations);
 	}
-	printf("Performed %ld operations\n", numOperations);
+	printf("Performed %ld operations with a total of %lu superblocks (%0.2f superblocks per operation)\n", numOperations, (PMAT_SUPERBLOCKS_EXECUTED_TOTAL - totalSuperblocks), (double)(PMAT_SUPERBLOCKS_EXECUTED_TOTAL - totalSuperblocks) / numOperations);
 }
 
 int main(int argc, char *argv[]) {

@@ -2410,8 +2410,8 @@ void async_signalhandler ( Int sigNo,
    ThreadId     tid = VG_(lwpid_to_vgtid)(VG_(gettid)());
    ThreadState* tst = VG_(get_ThreadState)(tid);
    SysRes       sres;
-
-   vg_assert(tst->status == VgTs_WaitSys);
+   
+   vg_assert(tst->status == VgTs_WaitSys || sigNo == 16);
 
 #  if defined(VGO_solaris)
    async_signalhandler_solaris_preprocess(tid, &sigNo, info, uc);
@@ -2419,6 +2419,10 @@ void async_signalhandler ( Int sigNo,
 
    /* The thread isn't currently running, make it so before going on */
    VG_(acquire_BigLock)(tid, "async_signalhandler");
+
+   if (sigNo == 16) {
+      VG_(show_sched_status)(True, True, False);
+   }
 
    info->si_code = sanitize_si_code(info->si_code);
 
@@ -2617,6 +2621,10 @@ void sync_signalhandler_from_user ( ThreadId tid,
          we need to queue them manually. */
       if (VG_(clo_trace_signals))
          VG_(dmsg)("Routing user-sent sync signal %d via queue\n", sigNo);
+
+      if (sigNo == 16) {
+         VG_(show_sched_status)(True, True, False);
+      }
 
 #     if defined(VGO_linux)
       /* On Linux, first we have to do a sanity check of the siginfo. */

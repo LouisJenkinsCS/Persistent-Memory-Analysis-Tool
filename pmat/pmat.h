@@ -43,6 +43,8 @@ typedef
        VG_USERREQ__PMC_PMAT_REGISTER_WITH_FN,
        VG_USERREQ__PMC_PMAT_SCHEDULER_START,
        VG_USERREQ__PMC_PMAT_SCHEDULER_STOP, // TODO: Implement
+       VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED,
+       VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED_TOTAL,
    } Vg_pmatClientRequest;
 
 
@@ -122,4 +124,19 @@ typedef int (*pmat_verify_fn)(void *buf, unsigned long long size);
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_PERSIST_ORDER, \
             (_qzz_addr1), (_qzz_sz1), (_qzz_addr2), (_qzz_sz2), 0)
 
-#endif
+/** Hint to scheduler that the current thread has entered code-of-interest. */
+#define PMAT_SCHEDULER_HINT_BEGIN \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_SCHEDULER_START, 0, 0, 0, 0, 0)
+
+#define PMAT_SCHEDULER_HINT_END \
+    VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__PMC_PMAT_SCHEDULER_STOP, 0, 0, 0, 0, 0)
+
+/**  Obtains number of superblocks executed by the current thread. */
+#define PMAT_SUPERBLOCKS_EXECUTED \
+    VALGRIND_DO_CLIENT_REQUEST_EXPR(0, VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED, 0, 0, 0, 0, 0)
+
+/**  Obtains number of superblocks executed across all threads. */
+#define PMAT_SUPERBLOCKS_EXECUTED_TOTAL \
+    VALGRIND_DO_CLIENT_REQUEST_EXPR(0, VG_USERREQ__PMC_PMAT_SUPERBLOCKS_EXECUTED_TOTAL, 0, 0, 0, 0, 0)
+
+#endif 
