@@ -86,17 +86,17 @@ int ML_(get_sched_lock_owner)(struct sched_lock *p)
    return (sched_lock_ops->get_sched_lock_owner)(p);
 }
 
-void ML_(acquire_sched_lock)(struct sched_lock *p)
+void ML_(acquire_sched_lock)(struct sched_lock *p, ThreadId tid)
 {
-   return (sched_lock_ops->acquire_sched_lock)(p);
+   return (sched_lock_ops->acquire_sched_lock)(p, tid);
 }
 
-void ML_(release_sched_lock)(struct sched_lock *p)
+void ML_(release_sched_lock)(struct sched_lock *p, ThreadId tid)
 {
-   return (sched_lock_ops->release_sched_lock)(p);
+   return (sched_lock_ops->release_sched_lock)(p, tid);
 }
 
-void ML_(exit_sched_lock)(struct sched_lock *p) 
+void ML_(exit_sched_lock)(struct sched_lock *p, ThreadId tid) 
 {
-   return (sched_lock_ops->exit_sched_lock)(p);
+   return (sched_lock_ops->exit_sched_lock)(p, tid);
 }

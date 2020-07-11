@@ -118,6 +118,8 @@ static struct pmem_ops {
     Double mean_verification_time;
     /** Sum-of-Squares-of-Differences nanoseconds per verification call*/
     Double ssd_verification_time;
+    /** Useful in debugging... */
+    OSet *dot_entries;
 } pmem;
 
 struct pmat_flush_location {
@@ -1540,6 +1542,20 @@ static Bool handle_gdb_monitor_command(ThreadId tid, HChar *req)
             return False;
     }
 }
+    
+static struct pmat_dot_entry *create_dot_entry(void) {
+    struct pmat_dot_entry *dot_entry = VG_(OSetGen_AllocNode)(pmem.dot_entries, sizeof(struct pmat_dot_entry));
+    dot_entry->startAddr = 0;
+    dot_entry->instr_addrs = VG_(newXA)(VG_(malloc), "pmat_dot_entry.instr_addrs", VG_(free), sizeof(struct pmat_addr_size_pair));
+    dot_entry->outgoing_addrs = VG_(newXA)(VG_(malloc), "pmat_dot_entry.outgoing_addrs", VG_(free), sizeof(Addr));
+    return dot_entry;
+}
+
+static void delete_dot_entry(struct pmat_dot_entry *dot_entry) {
+    VG_(deleteXA)(dot_entry->instr_addrs);
+    VG_(deleteXA)(dot_entry->outgoing_addrs);
+    VG_(OSetGen_Destroy)(dot_entry);
+}
 
 /**
 * \brief The main instrumentation function - the heart of the tool.
@@ -1573,6 +1589,11 @@ pmat_instrument(VgCallbackClosure *closure,
     IRSB *sbOut;
     IRTypeEnv *tyenv = bb->tyenv;
 
+    // Dotify this before returning it...
+    struct pmat_dot_entry *dot_entry = create_dot_entry();
+    Bool hasFirstEntry = False;
+
+
     if (gWordTy != hWordTy) {
         /* We don't currently support this case. */
         VG_(tool_panic)("host/guest word size mismatch");
@@ -1599,13 +1620,45 @@ pmat_instrument(VgCallbackClosure *closure,
             continue;
 
         switch (st->tag) {
-            case Ist_IMark:
+            case Ist_IMark: {
+                // Add original instruction
+                struct pmat_addr_size_pair pc = {
+                    .addr = st->Ist.IMark.addr + st->Ist.IMark.delta,
+                    .sz = st->Ist.IMark.len
+                };
+                if (!hasFirstEntry) {
+                    dot_entry->startAddr = pc.addr;
+                    hasFirstEntry = True;
+                }
+                VG_(addToXA)(dot_entry->instr_addrs, &pc);
+                addStmtToIRSB(sbOut, st);
+                break;
+            }
             case Ist_AbiHint:
             case Ist_Put:
             case Ist_PutI:
             case Ist_LoadG:
             case Ist_WrTmp:
             case Ist_Exit:
+            {
+                /**
+                 * Note: Callgrind limits where it reads the address, may be relevant for
+                 * debugging if any crashes are to occur...
+                 * 
+                 * if ( (st->Ist.Exit.jk == Ijk_Boring) ||
+                    (st->Ist.Exit.jk == Ijk_Call) ||
+                    (st->Ist.Exit.jk == Ijk_Ret) )
+                 */
+                // Add destination to outgoing_addrs
+                if ( (st->Ist.Exit.jk == Ijk_Boring) ||
+                    (st->Ist.Exit.jk == Ijk_Call) ||
+                    (st->Ist.Exit.jk == Ijk_Ret) ) {
+                    Addr pc = (hWordTy == Ity_I32) ? st->Ist.Exit.dst->Ico.U32 : st->Ist.Exit.dst->Ico.U64;
+                    VG_(addToXA)(dot_entry->outgoing_addrs, &pc);
+                }
+                addStmtToIRSB(sbOut, st);
+                break;
+            }
             case Ist_Dirty:
                 /* for now we are not interested in any of the above */
                 addStmtToIRSB(sbOut, st);
@@ -1737,6 +1790,13 @@ pmat_instrument(VgCallbackClosure *closure,
                 ppIRStmt(st);
                 tl_assert(0);
         }
+    }
+
+    // Add to set...
+    if (!VG_(OSetGen_Contains)(pmem.dot_entries, dot_entry)) {
+        VG_(OSetGen_Insert)(pmem.dot_entries, dot_entry);
+    } else {
+        VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
     }
 
     return sbOut;
@@ -2056,6 +2116,8 @@ pmat_post_clo_init(void)
         VG_(emit)("[ERROR] Bad eviction policy provided: '%s'; Require 'RR' or 'LRU' (not case sensitive)!\n", pmem.pmat_eviction_policy_str);
         VG_(exit)(1);
     }
+
+    pmem.dot_entries = VG_(OSetGen_Create)(0, cmp_pmat_dot_entry, VG_(malloc), "pmi.main.cpci.-6", VG_(free));
     // Fill RNG Pool
 
 }
@@ -2162,7 +2224,30 @@ pmat_fini(Int exitcode)
         }
     }
     VG_(emit)("Executed %lu superblocks...\n", sblocks);
-
+    VG_(OSetGen_ResetIter)(pmem.dot_entries);
+    struct pmat_dot_entry *entry = VG_(OSetGen_Next)(pmem.dot_entries);
+    while (entry) {
+        VG_(emit)("{.start=0x%x, .instrs=[", entry->startAddr);
+        Int n = VG_(sizeXA)(entry->instr_addrs);
+        for (Int i = 0; i < n; i++) {
+            struct pmat_addr_size_pair *pc = VG_(indexXA)(entry->instr_addrs, i);
+            if (i > 0) {
+                VG_(emit)(", ");
+            }
+            VG_(emit)("0x%x [%lu bytes]", pc->addr, pc->sz);
+        }
+        VG_(emit)("], .outgoing_instrs=[");
+        n = VG_(sizeXA)(entry->outgoing_addrs);
+        for (Int i = 0; i < n; i++) {
+            Addr pc = *(Addr**) VG_(indexXA)(entry->outgoing_addrs, i);
+            if (i > 0) {
+                VG_(emit)(", ");
+            }
+            VG_(emit)("0x%x", pc);
+        }
+        VG_(emit)("]}\n");
+        entry = VG_(OSetGen_Next)(pmem.dot_entries);
+    }
 }
 
 /**

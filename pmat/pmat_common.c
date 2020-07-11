@@ -37,6 +37,13 @@ UInt get_urandom(void) {
 }
 
 
+Word cmp_pmat_dot_entry(const void *key, const void *elem) {
+    const struct pmat_dot_entry *lhs = (const struct pmat_dot_entry *) key;
+    const struct pmat_dot_entry *rhs = (const struct pmat_dot_entry *) elem;
+
+    return lhs->startAddr - rhs->startAddr;
+}
+
 Word cmp_pmat_write_buffer_entries(const void *key, const void *elem) {
     const struct pmat_writeback_buffer_entry *lhs = (const struct pmat_writeback_buffer_entry *) (key);
     const struct pmat_writeback_buffer_entry *rhs = (const struct pmat_writeback_buffer_entry *) (elem);

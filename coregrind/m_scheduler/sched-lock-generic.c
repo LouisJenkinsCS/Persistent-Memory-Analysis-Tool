@@ -66,12 +66,12 @@ static int get_sched_lock_owner(struct sched_lock *p)
    return p->sema.owner_lwpid;
 }
 
-static void acquire_sched_lock(struct sched_lock *p)
+static void acquire_sched_lock(struct sched_lock *p, ThreadId tid)
 {
    ML_(sema_down)(&p->sema, False);
 }
 
-static void release_sched_lock(struct sched_lock *p)
+static void release_sched_lock(struct sched_lock *p, ThreadId tid)
 {
    ML_(sema_up)(&p->sema, False);
 }

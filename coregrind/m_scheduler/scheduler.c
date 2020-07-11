@@ -357,7 +357,8 @@ void VG_(acquire_BigLock)(ThreadId tid, const HChar* who)
    /* First, acquire the_BigLock.  We can't do anything else safely
       prior to this point.  Even doing debug printing prior to this
       point is, technically, wrong. */
-   VG_(acquire_BigLock_LL)(NULL);
+   // VG_(acquire_BigLock_LL)(NULL);
+   ML_(acquire_sched_lock)(the_BigLock, tid);
 
    tst = VG_(get_ThreadState)(tid);
 
@@ -415,7 +416,8 @@ void VG_(release_BigLock)(ThreadId tid, ThreadStatus sleepstate,
 
    /* Release the_BigLock; this will reschedule any runnable
       thread. */
-   VG_(release_BigLock_LL)(NULL);
+   // VG_(release_BigLock_LL)(NULL);
+   ML_(release_sched_lock)(the_BigLock, tid);
 }
 
 static void init_BigLock(void)
@@ -433,13 +435,15 @@ static void deinit_BigLock(void)
 /* See pub_core_scheduler.h for description */
 void VG_(acquire_BigLock_LL) ( const HChar* who )
 {
-   ML_(acquire_sched_lock)(the_BigLock);
+   tl_assert2(False, "This should not be called!");
+   // ML_(acquire_sched_lock)(the_BigLock);
 }
 
 /* See pub_core_scheduler.h for description */
 void VG_(release_BigLock_LL) ( const HChar* who )
 {
-   ML_(release_sched_lock)(the_BigLock);
+   tl_assert2(False, "This should not be called!");
+   // ML_(release_sched_lock)(the_BigLock);
 }
 
 void VG_(exit_BigLock_LL)( const HChar* who )
@@ -1293,12 +1297,12 @@ void handle_noredir_jump ( /*OUT*/HWord* two_words,
    
    We assume that the caller has already called VG_(acquire_BigLock) for
    us, so we own the VCPU.  Also, all signals are blocked.
- */
+*/
 VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 {
    /* Holds the remaining size of this thread's "timeslice". */
    Int dispatch_ctr = 0;
-
+   
    ThreadState *tst = VG_(get_ThreadState)(tid);
    static Bool vgdb_startup_action_done = False;
 
@@ -1452,6 +1456,10 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 /* paranoia ... */
 	 vg_assert(tst->tid == tid);
 	 vg_assert(tst->os_state.lwpid == VG_(gettid)());
+
+    if (0)
+         VG_(message)(Vg_DebugMsg, "thread %u: running for %d bbs\n", 
+                                   tid, dispatch_ctr );
       }
 
       /* For stats purposes only. */
@@ -1581,22 +1589,24 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
       case VG_TRC_INNER_COUNTERZERO:
 	 /* Timeslice is out.  Let a new thread be scheduled. */
 	 vg_assert(dispatch_ctr == 0);
-      if (VG_(handle_code_of_interest) && random_pool_idx == 1024) {
-         int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
-         tl_assert2(fd >= 0, "Could not open /dev/urandom");
-         VG_(read)(fd, &random_pool, sizeof(random_pool));
-         VG_(close)(fd);
-         random_pool_idx = 0;
-      }
+      // if (VG_(handle_code_of_interest) && random_pool_idx == 1024) {
+      //    int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+      //    tl_assert2(fd >= 0, "Could not open /dev/urandom");
+      //    VG_(read)(fd, &random_pool, sizeof(random_pool));
+      //    VG_(close)(fd);
+      //    random_pool_idx = 0;
+      // }
       // Check if we are in code of interest
       tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
       tl_assert(VG_(get_running_tid)() != VG_INVALID_THREADID && VG_(get_running_tid)() >= 0);
-      if (VG_(handle_code_of_interest) && !VG_(code_of_interest)[VG_(get_running_tid)()] && random_pool[random_pool_idx++] % 2 == 0) {
-         if (VG_(randomize_quantum)) {
-            dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
-         } else {
-            dispatch_ctr = VG_(scheduling_quantum);
-         }
+      if (VG_(handle_code_of_interest) && VG_(code_of_interest)[VG_(get_running_tid)()]) {
+         
+         // if (VG_(randomize_quantum)) {
+         //    // dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
+         //    dispatch_ctr = VG_(scheduling_quantum);
+         // } else {
+         //    dispatch_ctr = VG_(scheduling_quantum);
+         // }
       }
       break;
 

@@ -49,6 +49,9 @@
 #include "priv_sched-lock-impl.h"
 #include "pub_core_clientstate.h"
 
+extern Bool VG_(code_of_interest)[1024];
+extern Bool VG_(handle_code_of_interest); 
+
 struct semaphore {
    volatile unsigned count; 
 };
@@ -201,7 +204,7 @@ static void set_holdout_thread(struct sched_lock *p) {
    }
 }
 
-static void release_sched_lock(struct sched_lock *p) {
+static void release_sched_lock(struct sched_lock *p, ThreadId tid) {
    acquire(p);
    tl_assert2(p->used_thread_locks - (p->holdout_thread == VG_(gettid)() ? 0 : 1) >= 0, "Bad used_thread_locks=%lu", p->used_thread_locks);
    
@@ -215,7 +218,11 @@ static void release_sched_lock(struct sched_lock *p) {
    }
    // Pick a holdout thread if other threads are waiting...
    if (p->holdout_thread == VG_INVALID_THREADID) {
-      set_holdout_thread(p);
+      // set_holdout_thread(p);
+      if (VG_(handle_code_of_interest) && VG_(code_of_interest)[tid]) {
+         p->holdout_thread = VG_(gettid)();
+         p->num_holdout = VG_(random)(&VG_(quantum_seed)) % maximum_holdout + 1;
+      }
    }
    // Check if anyone needs access
    if (p->used_thread_locks) {
@@ -341,14 +348,14 @@ static void acquire_sched_lock(struct sched_lock *p) {
    }
 }
 
-static void exit_sched_lock(struct sched_lock *p) {
+static void exit_sched_lock(struct sched_lock *p, ThreadId tid) {
    acquire(p);
    // VG_(emit)("Thread#%lu is exiting...\n", VG_(gettid)());
    if (VG_(count_living_threads)() == 2) {
       p->holdout_thread = VG_INVALID_THREADID;
    }
    release(p);
-   release_sched_lock(p);
+   release_sched_lock(p, tid);
 }
 
 const struct sched_lock_ops ML_(random_lock_ops) = {

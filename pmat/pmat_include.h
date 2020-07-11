@@ -34,6 +34,17 @@ struct pmat_writeback_buffer_entry {
     ThreadId tid; 
 };
 
+struct pmat_addr_size_pair {
+    Addr addr;
+    SizeT sz;
+};
+
+struct pmat_dot_entry {
+    Addr startAddr;
+    XArray *instr_addrs;
+    XArray *outgoing_addrs;
+};
+
 // Converts addr to cache line addr
 #define CACHELINE_SIZE 64ULL
 #define TRIM_CACHELINE(addr) ((addr) &~ (CACHELINE_SIZE - 1ULL))
@@ -82,6 +93,8 @@ Word cmp_pmat_registered_files2(const void *key, const void *elem);
 Word cmp_pmat_write_buffer_entries(const void *key, const void *elem);
 
 Word cmp_pmat_transient_entries(const void *key, const void *elem);
+
+Word cmp_pmat_dot_entry(const void *key, const void *elem);
 
 /**
  * Eviction Policy Callbacks; All new policies should implement this interface.
