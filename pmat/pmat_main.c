@@ -2234,7 +2234,14 @@ pmat_fini(Int exitcode)
             if (i > 0) {
                 VG_(emit)(", ");
             }
-            VG_(emit)("0x%x [%lu bytes]", pc->addr, pc->sz);
+            VG_(emit)("0x%x [%lu %s] (", pc->addr, pc->sz, pc->sz > 1 ? "bytes" : "byte");
+            for (Int j = 0; j < pc->sz; j++) {
+                if (j > 0) {
+                    VG_(emit)(" ");
+                }
+                VG_(emit)("%02x", *(UChar *) (pc->addr + j));
+            }
+            VG_(emit)(")");
         }
         VG_(emit)("], .outgoing_instrs=[");
         n = VG_(sizeXA)(entry->outgoing_addrs);
