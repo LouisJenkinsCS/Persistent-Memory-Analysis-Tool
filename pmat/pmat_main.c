@@ -2196,6 +2196,56 @@ static void scientificNotation(Double d, Double *norm, Word *exp) {
     }
 }
 
+static char *x86MCToASM(const char *mc_str, Addr instr_addr) {
+    SysRes res = VG_(open)("/tmp/pmat_x86MCToASM.err", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+    if (sr_isError(res)) {
+        VG_(emit)("Could not open file \"/tmp/pmat_x86MCToASM.err\"; errno: %ld\n", sr_Err(res));
+        tl_assert(0);
+    }
+    Int fderr = sr_Res(res);
+    res = VG_(open)("/tmp/pmat_x86MCToASM.out", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+    if (sr_isError(res)) {
+        VG_(emit)("Could not open file \"/tmp/pmat_x86MCToASM.out\"; errno: %ld\n", sr_Err(res));
+        tl_assert(0);
+    }
+    Int fdout = sr_Res(res);
+    Int pid = VG_(fork)();
+    if (!pid) {
+        // Child
+        VG_(close)(1);
+        VG_(dup2)(1, fdout);
+        VG_(close)(2);  
+        VG_(dup2)(2, fderr);
+        char instr_addr_str[32] = {0};
+        VG_(snprintf)(instr_addr_str, 32, "0x%x", instr_addr);
+        char *args[5];
+        args[0] = "python";
+        args[1] = "/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py";
+        args[2] = mc_str;
+        args[3] = instr_addr_str;
+        args[4] = NULL;
+        exec("/home/louisjenkinscs/anaconda3/bin/python", args);
+    } else {
+        // Parent
+        Int retval;
+        Int retpid = VG_(waitpid)(pid, &retval, 0);
+        tl_assert2(VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0, "Failed to execute x86ToAssembly.py...");
+        char tmpstr[4096] = {0};
+        char *retstr = VG_(malloc)(NULL, 4096);
+        VG_(read)(fdout, retstr, 4096); // Note: I do not handle signal interrupting syscall problems here...
+        int j = 0;
+        for (int i = 0; i < VG_(strlen)(retstr); i++) {
+            if (tmpstr[i] == '\n') {
+                retstr[j++] = '\\';
+                retstr[j++] = '\n';
+            } else {
+                retstr[j++] = tmpstr[i];
+            }
+        }
+        return retstr;
+    }
+}
+
 /**
  * \brief Function called on program exit.
  */
@@ -2227,23 +2277,34 @@ pmat_fini(Int exitcode)
     VG_(OSetGen_ResetIter)(pmem.dot_entries);
     struct pmat_dot_entry *entry = VG_(OSetGen_Next)(pmem.dot_entries);
     while (entry) {
+        char instr_str[1024] = {0};
+        instr_str[0] = '"';
+        Int instr_str_idx = 1;
         VG_(emit)("{.start=0x%x, .instrs=[", entry->startAddr);
         Int n = VG_(sizeXA)(entry->instr_addrs);
         for (Int i = 0; i < n; i++) {
             struct pmat_addr_size_pair *pc = VG_(indexXA)(entry->instr_addrs, i);
             if (i > 0) {
-                VG_(emit)(", ");
+                // VG_(emit)(" ");
+                instr_str[instr_str_idx++] = ' ';
+                tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
             }
-            VG_(emit)("0x%x [%lu %s] (", pc->addr, pc->sz, pc->sz > 1 ? "bytes" : "byte");
+            // VG_(emit)("0x%x [%lu %s] (", pc->addr, pc->sz, pc->sz > 1 ? "bytes" : "byte");
             for (Int j = 0; j < pc->sz; j++) {
                 if (j > 0) {
-                    VG_(emit)(" ");
+                    // VG_(emit)(" ");
+                    instr_str[instr_str_idx++] = ' ';
+                    tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
                 }
-                VG_(emit)("%02x", *(UChar *) (pc->addr + j));
+                instr_str_idx += VG_(snprintf)(instr_str + instr_str_idx, 1024 - instr_str_idx, "%02x", *(UChar *) (pc->addr + j));
+                tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
+                // VG_(emit)("%02x", *(UChar *) (pc->addr + j));
             }
-            VG_(emit)(")");
+            // VG_(emit)(")");
         }
-        VG_(emit)("], .outgoing_instrs=[");
+        char *x86str = x86MCToASM(instr_str, entry->startAddr);
+        VG_(emit)("%s\"], .outgoing_instrs=[", x86str);
+        VG_(free)(x86str);
         n = VG_(sizeXA)(entry->outgoing_addrs);
         for (Int i = 0; i < n; i++) {
             Addr pc = *(Addr**) VG_(indexXA)(entry->outgoing_addrs, i);
