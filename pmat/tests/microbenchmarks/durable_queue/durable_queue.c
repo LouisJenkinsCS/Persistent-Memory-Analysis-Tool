@@ -302,8 +302,6 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 		return false;
 	}
 
-	PMAT_SCHEDULER_HINT_BEGIN;
-
 	// Set and flush value to be written.
 	node->value = value;	
 	#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 0)
@@ -336,7 +334,6 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
 					post_enqueue(dq);
 					hazard_release(last, false);
-					PMAT_SCHEDULER_HINT_END;
 					return true;
 				}
 			} else {
@@ -358,8 +355,6 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 	dq->returnedValues[tid] = DQ_NULL;
 	FLUSH(&dq->returnedValues[tid]);
 
-	PMAT_SCHEDULER_HINT_BEGIN;
-
 	while (1) {
 		struct DurableQueueNode *first = (void *) atomic_load(&dq->head);
 		hazard_acquire(0, first);
@@ -378,7 +373,6 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					FLUSH(&dq->returnedValues[tid]);
 					hazard_release(first, false);
 					hazard_release(next, false);
-					PMAT_SCHEDULER_HINT_END;
 					return DQ_EMPTY;
 				} else {
 					#if defined(DURABLE_QUEUE_BUG_FLUSHOPT) && DURABLE_QUEUE_BUG_FLUSHOPT & (1 << 3)
@@ -401,12 +395,11 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					CLFLUSHOPT(&dq->head);
 					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 4)
 					// NOP
-					#else
+=					#else
 					FLUSH(&dq->head);
 					#endif
 					hazard_release(first, true);
 					post_dequeue(dq);
-					PMAT_SCHEDULER_HINT_END;
 					return retval;
 				}
 			}

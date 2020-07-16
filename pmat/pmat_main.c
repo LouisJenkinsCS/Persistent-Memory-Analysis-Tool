@@ -1547,14 +1547,14 @@ static struct pmat_dot_entry *create_dot_entry(void) {
     struct pmat_dot_entry *dot_entry = VG_(OSetGen_AllocNode)(pmem.dot_entries, sizeof(struct pmat_dot_entry));
     dot_entry->startAddr = 0;
     dot_entry->instr_addrs = VG_(newXA)(VG_(malloc), "pmat_dot_entry.instr_addrs", VG_(free), sizeof(struct pmat_addr_size_pair));
-    dot_entry->outgoing_addrs = VG_(newXA)(VG_(malloc), "pmat_dot_entry.outgoing_addrs", VG_(free), sizeof(Addr));
+    dot_entry->outgoing_addrs = VG_(OSetGen_Create)(0, cmp_pmat_dot_entry, VG_(malloc), "pmat_dot_entry.outgoing_addrs", VG_(free));
     return dot_entry;
 }
 
 static void delete_dot_entry(struct pmat_dot_entry *dot_entry) {
     VG_(deleteXA)(dot_entry->instr_addrs);
-    VG_(deleteXA)(dot_entry->outgoing_addrs);
-    VG_(OSetGen_Destroy)(dot_entry);
+    VG_(OSetGen_Destroy)(dot_entry->outgoing_addrs);
+    VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
 }
 
 /**
@@ -1590,8 +1590,8 @@ pmat_instrument(VgCallbackClosure *closure,
     IRTypeEnv *tyenv = bb->tyenv;
 
     // Dotify this before returning it...
-    struct pmat_dot_entry *dot_entry = create_dot_entry();
-    Bool hasFirstEntry = False;
+    // struct pmat_dot_entry *dot_entry = create_dot_entry();
+    // Bool hasFirstEntry = False;
 
 
     if (gWordTy != hWordTy) {
@@ -1620,7 +1620,7 @@ pmat_instrument(VgCallbackClosure *closure,
             continue;
 
         switch (st->tag) {
-            case Ist_IMark: {
+            case Ist_IMark:  /* {
                 // Add original instruction
                 struct pmat_addr_size_pair pc = {
                     .addr = st->Ist.IMark.addr + st->Ist.IMark.delta,
@@ -1633,32 +1633,32 @@ pmat_instrument(VgCallbackClosure *closure,
                 VG_(addToXA)(dot_entry->instr_addrs, &pc);
                 addStmtToIRSB(sbOut, st);
                 break;
-            }
+            } */
             case Ist_AbiHint:
             case Ist_Put:
             case Ist_PutI:
             case Ist_LoadG:
             case Ist_WrTmp:
+            /*{
+                addStmtToIRSB(sbOut, st);
+                break;       
+            } */
             case Ist_Exit:
-            {
-                /**
-                 * Note: Callgrind limits where it reads the address, may be relevant for
-                 * debugging if any crashes are to occur...
-                 * 
-                 * if ( (st->Ist.Exit.jk == Ijk_Boring) ||
-                    (st->Ist.Exit.jk == Ijk_Call) ||
-                    (st->Ist.Exit.jk == Ijk_Ret) )
-                 */
+            /*{
                 // Add destination to outgoing_addrs
                 if ( (st->Ist.Exit.jk == Ijk_Boring) ||
                     (st->Ist.Exit.jk == Ijk_Call) ||
                     (st->Ist.Exit.jk == Ijk_Ret) ) {
                     Addr pc = (hWordTy == Ity_I32) ? st->Ist.Exit.dst->Ico.U32 : st->Ist.Exit.dst->Ico.U64;
-                    VG_(addToXA)(dot_entry->outgoing_addrs, &pc);
+                    if (!VG_(OSetGen_Contains)(dot_entry->outgoing_addrs, &pc)) {
+                        Addr *input = VG_(OSetGen_AllocNode)(dot_entry->outgoing_addrs, sizeof(Addr));
+                        *input = pc;
+                        VG_(OSetGen_Insert)(dot_entry->outgoing_addrs, input);
+                    }
                 }
                 addStmtToIRSB(sbOut, st);
                 break;
-            }
+            } */
             case Ist_Dirty:
                 /* for now we are not interested in any of the above */
                 addStmtToIRSB(sbOut, st);
@@ -1793,11 +1793,11 @@ pmat_instrument(VgCallbackClosure *closure,
     }
 
     // Add to set...
-    if (!VG_(OSetGen_Contains)(pmem.dot_entries, dot_entry)) {
-        VG_(OSetGen_Insert)(pmem.dot_entries, dot_entry);
-    } else {
-        VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
-    }
+    // if (!VG_(OSetGen_Contains)(pmem.dot_entries, dot_entry)) {
+    //     VG_(OSetGen_Insert)(pmem.dot_entries, dot_entry);
+    // } else {
+    //     VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
+    // }
 
     return sbOut;
 }
@@ -2212,24 +2212,24 @@ static char *x86MCToASM(const char *mc_str, Addr instr_addr) {
     Int pid = VG_(fork)();
     if (!pid) {
         // Child
-        VG_(close)(1);
-        VG_(dup2)(1, fdout);
-        VG_(close)(2);  
-        VG_(dup2)(2, fderr);
+        // VG_(close)(1);
+        // VG_(dup2)(1, fdout);
+        // VG_(close)(2);  
+        // VG_(dup2)(2, fderr);
         char instr_addr_str[32] = {0};
         VG_(snprintf)(instr_addr_str, 32, "0x%x", instr_addr);
-        char *args[5];
-        args[0] = "python";
-        args[1] = "/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py";
-        args[2] = mc_str;
-        args[3] = instr_addr_str;
-        args[4] = NULL;
+        char *args[4];
+        args[0] = "/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py";
+        args[1] = mc_str;
+        args[2] = instr_addr_str;
+        args[3] = NULL;
+        VG_(emit)("Executing /home/louisjenkinscs/anaconda3/bin/python /home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py %s %s", mc_str, instr_addr_str);
         exec("/home/louisjenkinscs/anaconda3/bin/python", args);
     } else {
         // Parent
         Int retval;
         Int retpid = VG_(waitpid)(pid, &retval, 0);
-        tl_assert2(VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0, "Failed to execute x86ToAssembly.py...");
+        tl_assert2(VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0, "Failed to execute x86ToAssembly.py... Return code: %d\n", VKI_WEXITSTATUS(retval));
         char tmpstr[4096] = {0};
         char *retstr = VG_(malloc)(NULL, 4096);
         VG_(read)(fdout, retstr, 4096); // Note: I do not handle signal interrupting syscall problems here...
@@ -2276,11 +2276,16 @@ pmat_fini(Int exitcode)
     VG_(emit)("Executed %lu superblocks...\n", sblocks);
     VG_(OSetGen_ResetIter)(pmem.dot_entries);
     struct pmat_dot_entry *entry = VG_(OSetGen_Next)(pmem.dot_entries);
+    VgFile *fp = VG_(fopen)("x86MCToASM.dot", VKI_O_CREAT | VKI_O_TRUNC | VKI_O_RDWR, 0666);
+    if (fp == NULL) {
+        VG_(emit)("Could not open file \"x86MCToASM.dot\"");
+        tl_assert(0);
+    }
+    VG_(fprintf)(fp, "digraph x86MCToASM {\n");
     while (entry) {
         char instr_str[1024] = {0};
-        instr_str[0] = '"';
-        Int instr_str_idx = 1;
-        VG_(emit)("{.start=0x%x, .instrs=[", entry->startAddr);
+        Int instr_str_idx = 0;
+        VG_(fprintf)(fp, "\t\"0x%x\" [label=\"", entry->startAddr);
         Int n = VG_(sizeXA)(entry->instr_addrs);
         for (Int i = 0; i < n; i++) {
             struct pmat_addr_size_pair *pc = VG_(indexXA)(entry->instr_addrs, i);
@@ -2302,20 +2307,26 @@ pmat_fini(Int exitcode)
             }
             // VG_(emit)(")");
         }
-        char *x86str = x86MCToASM(instr_str, entry->startAddr);
-        VG_(emit)("%s\"], .outgoing_instrs=[", x86str);
-        VG_(free)(x86str);
-        n = VG_(sizeXA)(entry->outgoing_addrs);
-        for (Int i = 0; i < n; i++) {
-            Addr pc = *(Addr**) VG_(indexXA)(entry->outgoing_addrs, i);
-            if (i > 0) {
-                VG_(emit)(", ");
+        // char *x86str = x86MCToASM(instr_str, entry->startAddr);
+        VG_(fprintf)(fp, "%s\"]\n", instr_str);
+        // VG_(free)(x86str);
+        VG_(OSetGen_ResetIter)(entry->outgoing_addrs);
+        Addr *addr = VG_(OSetGen_Next)(entry->outgoing_addrs);
+        while (addr) {
+            struct pmat_dot_entry tmp = {.startAddr = *addr};
+            if (!VG_(OSetGen_Contains)(pmem.dot_entries, &tmp)) {
+                // if (i > 0) {
+                //     VG_(emit)(", ");
+                // }
+                VG_(fprintf)(fp, "\t\"0x%x\" -> \"0x%x\"\n", entry->startAddr, *addr);
             }
-            VG_(emit)("0x%x", pc);
+            addr = VG_(OSetGen_Next)(entry->outgoing_addrs);
         }
-        VG_(emit)("]}\n");
+        // VG_(emit)("]}\n");
         entry = VG_(OSetGen_Next)(pmem.dot_entries);
     }
+    VG_(fprintf)(fp, "}\n");
+    VG_(fclose)(fp);
 }
 
 /**

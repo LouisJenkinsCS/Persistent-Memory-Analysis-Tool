@@ -84,6 +84,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 				}
 			}
 			
+			PMAT_SCHEDULER_HINT_BEGIN;
 			numOperations++;
 			int rng = rand();
 			if (rng % 2 == 0) {
@@ -101,6 +102,7 @@ static void do_benchmark(struct DurableQueue *dq, int seconds) {
 					}	
 				}
 			}
+			PMAT_SCHEDULER_HINT_END;
 		}
 		printf("Thread %d performed %lu operations with a total of %lu superblocks (%0.2f superblocks per operation)\n", 
 			omp_get_thread_num(), numOperations, PMAT_SUPERBLOCKS_EXECUTED - threadSuperblocks, (double)(PMAT_SUPERBLOCKS_EXECUTED - threadSuperblocks) / numOperations);

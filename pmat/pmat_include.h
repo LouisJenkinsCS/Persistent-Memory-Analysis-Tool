@@ -42,7 +42,7 @@ struct pmat_addr_size_pair {
 struct pmat_dot_entry {
     Addr startAddr;
     XArray *instr_addrs;
-    XArray *outgoing_addrs;
+    OSet *outgoing_addrs;
 };
 
 // Converts addr to cache line addr
