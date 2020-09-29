@@ -550,6 +550,7 @@ UInt vprintf_wrk ( void(*sink)(HChar),
 */
 static HChar myprintf_buf[1000];
 static Int   n_myprintf_buf;
+Int myprintf_buf_fd = -1;
 
 static void add_to_myprintf_buf ( HChar c )
 {
@@ -557,9 +558,13 @@ static void add_to_myprintf_buf ( HChar c )
    myprintf_buf[n_myprintf_buf++] = c;
    myprintf_buf[n_myprintf_buf] = 0;
    if (emit) {
-      (*vex_log_bytes)( myprintf_buf, vex_strlen(myprintf_buf) );
-      n_myprintf_buf = 0;
-      myprintf_buf[n_myprintf_buf] = 0;
+      if (myprintf_buf_fd != -1) {
+
+      } else {
+         (*vex_log_bytes)( myprintf_buf, vex_strlen(myprintf_buf) );
+         n_myprintf_buf = 0;
+         myprintf_buf[n_myprintf_buf] = 0;
+      }
    }
 }
 

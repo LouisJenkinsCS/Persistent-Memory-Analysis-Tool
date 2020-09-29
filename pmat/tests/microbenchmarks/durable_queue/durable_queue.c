@@ -283,16 +283,6 @@ struct DurableQueue *DurableQueue_recovery(void *heap, size_t sz) PERSISTENT {
 	return dq;
 }
 
-static void post_enqueue(struct DurableQueue *dq) {
-	dq->metadata[0]++;
-	FLUSH(&dq->metadata[0]);
-}
-
-static void post_dequeue(struct DurableQueue *dq) {
-	dq->metadata[1]++;
-	FLUSH(&dq->metadata[1]);
-}
-
 bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 	assert(value != -1);
 	// Allocate node...
@@ -332,7 +322,6 @@ bool DurableQueue_enqueue(struct DurableQueue *dq, int value) PERSISTENT {
 					FLUSH(&last->next);
 					#endif
 					atomic_compare_exchange_strong(&dq->tail, &last, (uintptr_t) node);
-					post_enqueue(dq);
 					hazard_release(last, false);
 					return true;
 				}
@@ -395,11 +384,10 @@ int DurableQueue_dequeue(struct DurableQueue *dq, int_least64_t tid) PERSISTENT 
 					CLFLUSHOPT(&dq->head);
 					#elif defined(DURABLE_QUEUE_BUG) && DURABLE_QUEUE_BUG & (1 << 4)
 					// NOP
-=					#else
+					#else
 					FLUSH(&dq->head);
 					#endif
 					hazard_release(first, true);
-					post_dequeue(dq);
 					return retval;
 				}
 			}

@@ -95,6 +95,7 @@
 #include "pub_core_scheduler.h"     // self
 #include "pub_core_redir.h"
 #include "libvex_emnote.h"          // VexEmNote
+#include "pmat_backend.h"
 
 
 /* ---------------------------------------------------------------------
@@ -102,23 +103,6 @@
    ------------------------------------------------------------------ */
 
 /* ThreadId and ThreadState are defined elsewhere*/
-
-/* If False, a fault is Valgrind-internal (ie, a bug) */
-Bool VG_(in_generated_code) = False;
-
-/* Determines whether we use a static quantum or randomized version. */
-Bool VG_(randomize_quantum) = False;
-/* Randomized Seed for quantum. */
-UInt VG_(quantum_seed) = 0;
-/* If we are inside of code of interest as specified via a hint. */
-Bool VG_(code_of_interest)[1024] = {False};
-/* If we handle code of interest hints.*/
-Bool VG_(handle_code_of_interest) = False; 
-
-/* Defines the thread-scheduling timeslice, in terms of the number of
-   basic blocks we attempt to run each thread for.  Smaller values
-   give finer interleaving but much increased scheduling overheads. */
-UInt VG_(scheduling_quantum) = 1000;
 
 /* 64-bit counter for the number of basic blocks done. */
 static ULong bbs_done = 0;
@@ -1386,7 +1370,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
    vg_assert(VG_(is_running_thread)(tid));
 
 
-   dispatch_ctr = VG_(scheduling_quantum);
+   dispatch_ctr = 1; // VG_(scheduling_quantum);
 
    static UInt random_pool[1024];
    static UInt random_pool_idx = 1024;
@@ -1440,19 +1424,19 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 	 n_scheduling_events_MAJOR++;
 
 	 /* Figure out how many bbs to ask vg_run_innerloop to do. */
-    if (VG_(randomize_quantum)) {
-      if (random_pool_idx == 1024) {
-         int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
-         tl_assert2(fd >= 0, "Could not open /dev/urandom");
-         VG_(read)(fd, &random_pool, sizeof(random_pool));
-         VG_(close)(fd);
-         random_pool_idx = 0;
-      }
-      dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
-    } else {
-      dispatch_ctr = VG_(scheduling_quantum);
-    }
-
+   //  if (VG_(randomize_quantum)) {
+   //    if (random_pool_idx == 1024) {
+   //       int fd = VG_(fd_open)("/dev/urandom", VKI_O_RDONLY, 0);
+   //       tl_assert2(fd >= 0, "Could not open /dev/urandom");
+   //       VG_(read)(fd, &random_pool, sizeof(random_pool));
+   //       VG_(close)(fd);
+   //       random_pool_idx = 0;
+   //    }
+   //    dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
+   //  } else {
+   //    dispatch_ctr = VG_(scheduling_quantum);
+   //  }
+    dispatch_ctr = 1;
 	 /* paranoia ... */
 	 vg_assert(tst->tid == tid);
 	 vg_assert(tst->os_state.lwpid == VG_(gettid)());
@@ -1582,8 +1566,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
             before swapping to another.  That means that short term
             spins waiting for hardware to poke memory won't cause a
             thread swap. */
-         if (dispatch_ctr > 300)
-            dispatch_ctr = 300;
+         // if (dispatch_ctr > 300)
+            // dispatch_ctr = 300;
+            dispatch_ctr = 1;
 	 break;
 
       case VG_TRC_INNER_COUNTERZERO:
@@ -1597,9 +1582,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
       //    random_pool_idx = 0;
       // }
       // Check if we are in code of interest
-      tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
-      tl_assert(VG_(get_running_tid)() != VG_INVALID_THREADID && VG_(get_running_tid)() >= 0);
-      if (VG_(handle_code_of_interest) && VG_(code_of_interest)[VG_(get_running_tid)()]) {
+      // tl_assert2(VG_(get_running_tid)() < 1024, "More than 1024 threads! tid=%d", VG_(get_running_tid)());
+      // tl_assert(VG_(get_running_tid)() != VG_INVALID_THREADID && VG_(get_running_tid)() >= 0);
+      // if (VG_(handle_code_of_interest) && VG_(code_of_interest)[VG_(get_running_tid)()]) {
          
          // if (VG_(randomize_quantum)) {
          //    // dispatch_ctr = (random_pool[random_pool_idx++] % VG_(scheduling_quantum)) + 1;
@@ -1607,7 +1592,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
          // } else {
          //    dispatch_ctr = VG_(scheduling_quantum);
          // }
-      }
+      // }
       break;
 
       case VG_TRC_FAULT_SIGNAL:

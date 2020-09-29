@@ -186,6 +186,8 @@
 
 /* We need to know this to do sub-register accesses correctly. */
 static VexEndness host_endness;
+ 
+Bool should_break = False;
 
 /* Pointer to the guest code area (points to start of BB, not to the
    insn being processed). */
@@ -3210,6 +3212,7 @@ ULong dis_op2_G_E ( const VexAbiInfo* vbi,
 
    /* E refers to memory */    
    {
+      should_break  = True;
       addr = disAMode ( &len, vbi, pfx, delta0, dis_buf, 0 );
       assign(dst0, loadLE(ty,mkexpr(addr)));
       assign(src,  getIRegG(size,pfx,rm));
@@ -3354,6 +3357,7 @@ ULong dis_mov_G_E ( DisResult *dres, const VexAbiInfo*  vbi,
 
    /* E refers to memory */    
    {
+      should_break = True;
       if (haveF2(pfx)) { *ok = False; return delta0; }
       /* F3(XRELEASE) is acceptable, though. */
       IRTemp addr = disAMode ( &len, vbi, pfx, delta0, dis_buf, 0 );
@@ -8841,6 +8845,7 @@ ULong dis_mov_S_E ( DisResult *dres,
 
    /* E refers to memory */
    {
+      should_break = True;
       IRTemp addr = disAMode(&len, vbi, pfx, delta0, dis_buf, 0);
       storeLE(mkexpr(addr), mkU16(0));
       DIP("mov %s,%s\n", nameSReg(gregOfRexRM(pfx, rm)),
@@ -32657,7 +32662,7 @@ DisResult disInstr_AMD64_WRK (
    }
 
    // Split on LOCK-prefixed instructions
-   if (haveLOCK(pfx) && vex_control.superblock_granularity > 0) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
+   if ((haveLOCK(pfx) && vex_control.superblock_granularity > 0) || should_break) stmt( IRStmt_Put( OFFB_RIP, mkU64(guest_RIP_bbstart+delta) ) );
    vassert(delta - delta_at_primary_opcode >= 0);
    vassert(delta - delta_at_primary_opcode < 16/*let's say*/);
 

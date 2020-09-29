@@ -1590,8 +1590,8 @@ pmat_instrument(VgCallbackClosure *closure,
     IRTypeEnv *tyenv = bb->tyenv;
 
     // Dotify this before returning it...
-    // struct pmat_dot_entry *dot_entry = create_dot_entry();
-    // Bool hasFirstEntry = False;
+    struct pmat_dot_entry *dot_entry = create_dot_entry();
+    Bool hasFirstEntry = False;
 
 
     if (gWordTy != hWordTy) {
@@ -1620,7 +1620,7 @@ pmat_instrument(VgCallbackClosure *closure,
             continue;
 
         switch (st->tag) {
-            case Ist_IMark:  /* {
+            case Ist_IMark:  {
                 // Add original instruction
                 struct pmat_addr_size_pair pc = {
                     .addr = st->Ist.IMark.addr + st->Ist.IMark.delta,
@@ -1633,7 +1633,7 @@ pmat_instrument(VgCallbackClosure *closure,
                 VG_(addToXA)(dot_entry->instr_addrs, &pc);
                 addStmtToIRSB(sbOut, st);
                 break;
-            } */
+            }
             case Ist_AbiHint:
             case Ist_Put:
             case Ist_PutI:
@@ -1644,7 +1644,7 @@ pmat_instrument(VgCallbackClosure *closure,
                 break;       
             } */
             case Ist_Exit:
-            /*{
+            {
                 // Add destination to outgoing_addrs
                 if ( (st->Ist.Exit.jk == Ijk_Boring) ||
                     (st->Ist.Exit.jk == Ijk_Call) ||
@@ -1658,7 +1658,7 @@ pmat_instrument(VgCallbackClosure *closure,
                 }
                 addStmtToIRSB(sbOut, st);
                 break;
-            } */
+            }
             case Ist_Dirty:
                 /* for now we are not interested in any of the above */
                 addStmtToIRSB(sbOut, st);
@@ -1793,11 +1793,11 @@ pmat_instrument(VgCallbackClosure *closure,
     }
 
     // Add to set...
-    // if (!VG_(OSetGen_Contains)(pmem.dot_entries, dot_entry)) {
-    //     VG_(OSetGen_Insert)(pmem.dot_entries, dot_entry);
-    // } else {
-    //     VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
-    // }
+    if (!VG_(OSetGen_Contains)(pmem.dot_entries, dot_entry)) {
+        VG_(OSetGen_Insert)(pmem.dot_entries, dot_entry);
+    } else {
+        VG_(OSetGen_FreeNode)(pmem.dot_entries, dot_entry);
+    }
 
     return sbOut;
 }
@@ -2217,21 +2217,22 @@ static char *x86MCToASM(const char *mc_str, Addr instr_addr) {
         // VG_(close)(2);  
         // VG_(dup2)(2, fderr);
         char instr_addr_str[32] = {0};
-        VG_(snprintf)(instr_addr_str, 32, "0x%x", instr_addr);
+        VG_(snprintf)(instr_addr_str, 32, "%llu", instr_addr);
         char *args[4];
-        args[0] = "/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py";
+        args[0] = "/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly";
         args[1] = mc_str;
         args[2] = instr_addr_str;
         args[3] = NULL;
-        VG_(emit)("Executing /home/louisjenkinscs/anaconda3/bin/python /home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py %s %s", mc_str, instr_addr_str);
-        exec("/home/louisjenkinscs/anaconda3/bin/python", args);
+        // VG_(emit)("Executing /home/louisjenkinscs/anaconda3/bin/python /home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly.py %s %s", mc_str, instr_addr_str);
+        exec("/home/louisjenkinscs/GitHub/Persistent-Memory-Analysis-Tool/pmat/x86ToAssembly", args);
+        VG_(exit)(-1);
     } else {
         // Parent
         Int retval;
         Int retpid = VG_(waitpid)(pid, &retval, 0);
-        tl_assert2(VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0, "Failed to execute x86ToAssembly.py... Return code: %d\n", VKI_WEXITSTATUS(retval));
+        // tl_assert2(VKI_WIFEXITED(retval) && VKI_WEXITSTATUS(retval) == 0, "Failed to execute x86ToAssembly... Return code: %d\n", VKI_WEXITSTATUS(retval));
         char tmpstr[4096] = {0};
-        char *retstr = VG_(malloc)(NULL, 4096);
+        char *retstr = VG_(malloc)("x86MCToASM", 4096);
         VG_(read)(fdout, retstr, 4096); // Note: I do not handle signal interrupting syscall problems here...
         int j = 0;
         for (int i = 0; i < VG_(strlen)(retstr); i++) {
@@ -2242,8 +2243,12 @@ static char *x86MCToASM(const char *mc_str, Addr instr_addr) {
                 retstr[j++] = tmpstr[i];
             }
         }
+        VG_(close)(fdout);
+        VG_(close)(fderr);
         return retstr;
     }
+    tl_assert(0);
+    return NULL;
 }
 
 /**
@@ -2283,7 +2288,7 @@ pmat_fini(Int exitcode)
     }
     VG_(fprintf)(fp, "digraph x86MCToASM {\n");
     while (entry) {
-        char instr_str[1024] = {0};
+        char instr_str[4096] = {0};
         Int instr_str_idx = 0;
         VG_(fprintf)(fp, "\t\"0x%x\" [label=\"", entry->startAddr);
         Int n = VG_(sizeXA)(entry->instr_addrs);
@@ -2292,37 +2297,39 @@ pmat_fini(Int exitcode)
             if (i > 0) {
                 // VG_(emit)(" ");
                 instr_str[instr_str_idx++] = ' ';
-                tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
+                tl_assert2(instr_str_idx < 4096, "Out of Bounds!");
             }
             // VG_(emit)("0x%x [%lu %s] (", pc->addr, pc->sz, pc->sz > 1 ? "bytes" : "byte");
             for (Int j = 0; j < pc->sz; j++) {
                 if (j > 0) {
                     // VG_(emit)(" ");
                     instr_str[instr_str_idx++] = ' ';
-                    tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
+                    tl_assert2(instr_str_idx < 4096, "Out of Bounds!");
                 }
-                instr_str_idx += VG_(snprintf)(instr_str + instr_str_idx, 1024 - instr_str_idx, "%02x", *(UChar *) (pc->addr + j));
-                tl_assert2(instr_str_idx < 1024, "Out of Bounds!");
+                instr_str_idx += VG_(snprintf)(instr_str + instr_str_idx, 4096 - instr_str_idx, "\\x%02x", *(UChar *) (pc->addr + j));
+                tl_assert2(instr_str_idx < 4096, "Out of Bounds!");
                 // VG_(emit)("%02x", *(UChar *) (pc->addr + j));
             }
             // VG_(emit)(")");
         }
-        // char *x86str = x86MCToASM(instr_str, entry->startAddr);
+        char *x86str = x86MCToASM(instr_str, entry->startAddr);
         VG_(fprintf)(fp, "%s\"]\n", instr_str);
-        // VG_(free)(x86str);
+        VG_(emit)("-----------\n%s\n-----------\n", x86str);
+        VG_(free)(x86str);
         VG_(OSetGen_ResetIter)(entry->outgoing_addrs);
         Addr *addr = VG_(OSetGen_Next)(entry->outgoing_addrs);
         while (addr) {
             struct pmat_dot_entry tmp = {.startAddr = *addr};
+            Int i = 0;
             if (!VG_(OSetGen_Contains)(pmem.dot_entries, &tmp)) {
-                // if (i > 0) {
-                //     VG_(emit)(", ");
-                // }
+                if (i++ > 0) {
+                    VG_(emit)(", ");
+                }
                 VG_(fprintf)(fp, "\t\"0x%x\" -> \"0x%x\"\n", entry->startAddr, *addr);
             }
             addr = VG_(OSetGen_Next)(entry->outgoing_addrs);
         }
-        // VG_(emit)("]}\n");
+        VG_(emit)("]}\n");
         entry = VG_(OSetGen_Next)(pmem.dot_entries);
     }
     VG_(fprintf)(fp, "}\n");

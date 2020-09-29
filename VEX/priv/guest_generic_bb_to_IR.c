@@ -177,6 +177,8 @@ static Bool const_False ( void* callback_opaque, Addr a ) {
    dis_instr_fn, so any errors it makes show up sooner.
 */
 
+extern Bool should_break;
+
 IRSB* bb_to_IR ( 
          /*OUT*/VexGuestExtents* vge,
          /*OUT*/UInt*            n_sc_extents,
@@ -461,15 +463,17 @@ IRSB* bb_to_IR (
             vassert(dres.jk_StopHere == Ijk_INVALID);
             if (n_instrs < guest_max_insns_really) {
                if (
-                     (vex_control.superblock_granularity > 0 && guest_code[delta] == 0xF0) || // LOCK-prefixed
-                     (vex_control.superblock_granularity > 1 && (guest_code[delta] == 0x0F && guest_code[delta + 1] == 0xAE)) // FLUSH or FENCE
+                     // (vex_control.superblock_granularity > 0 && guest_code[delta] == 0xF0) || // LOCK-prefixed
+                     // (vex_control.superblock_granularity > 1 && (guest_code[delta] == 0x0F && guest_code[delta + 1] == 0xAE)) // FLUSH or FENCE
                      // TODO: Handle loads and stores
+                     should_break
                   ) {
                   /* We have to stop.  See comment above re irsb field
                   settings here. */
                   irsb->next = IRExpr_Get(offB_GUEST_IP, guest_word_type);
                   /* irsb->jumpkind must already by Ijk_Boring */
                   irsb->offsIP = offB_GUEST_IP;
+                  should_break = False;
                   goto done;
                }
                /* keep going */

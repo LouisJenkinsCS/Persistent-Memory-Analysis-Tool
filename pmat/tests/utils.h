@@ -2,11 +2,15 @@
  * Utilities that should be utilized by tests and microbenchmarks
  */
 
+#ifndef PMAT_UTILS
+#define PMAT_UTILS
+
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <time.h>
 
 // Configurable Constants
 #ifndef MMAP_ADDRESS
@@ -39,3 +43,19 @@
     *(sizePtr) = __sz; \
     __arr; \
 })
+
+// Timer functions
+static size_t timer_msec = 0;
+static clock_t timer_before;
+
+static void setTimeout(size_t msec) {
+    timer_before = clock();
+    timer_msec = msec;
+}
+
+static bool hasTimedOut() {
+    clock_t difference = clock() - timer_before;
+    size_t msec = difference * 1000 / CLOCKS_PER_SEC;
+    return timer_msec <= msec;
+}
+#endif
